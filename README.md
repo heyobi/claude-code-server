@@ -265,6 +265,20 @@ The token is the only thing standing between anyone already on your tailnet and
 a shell on this machine, so treat `~/.config/claude-code-server/api-token` the
 way you would an SSH key. Delete it and restart to roll it.
 
+### Files
+
+Whatever a session produces is on the machine, which is not the same as being
+reachable. The app browses the workspace and opens what it finds: images,
+audio and video play in the conversation, text and code open in a block, and a
+page or a PDF gets its own tab. Paths mentioned in an answer become buttons
+underneath it, so a generated file is one tap from the sentence that announced
+it.
+
+`/api/file` resolves every request against the workspace root and refuses
+anything that lands outside it, which matters more than usual here because the
+API is reachable from the internet. The token travels in the query rather than
+a header for these, since an `<img>` cannot send one.
+
 ### Notifications
 
 A long job finishes minutes after you put the phone down, which is the case the

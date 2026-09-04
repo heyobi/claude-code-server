@@ -64,10 +64,13 @@ header {
 .dot.busy { background: var(--warn); animation: pulse 1s infinite; }
 .dot.off { background: var(--dim); }
 @keyframes pulse { 50% { opacity: .3; } }
+/* 44px is the smallest thing a thumb hits reliably, and these were 38. */
 button.icon {
-  background: none; border: 1px solid var(--line); color: var(--ink);
-  width: 38px; height: 38px; border-radius: 11px; font-size: 17px; flex: none;
+  background: var(--bg); border: 1px solid var(--line); color: var(--ink);
+  width: 44px; height: 44px; border-radius: 13px; font-size: 19px; flex: none;
+  display: flex; align-items: center; justify-content: center;
 }
+button.icon:active { background: var(--line); }
 
 /* ---------------------------------------------------------------- stream */
 #stream { flex: 1; overflow-y: auto; padding: 12px; -webkit-overflow-scrolling: touch; }
@@ -140,6 +143,23 @@ button.icon {
   border: 1px solid var(--line); background: var(--bg); color: var(--ink); font-size: 14px;
 }
 
+/* ---------------------------------------------------------------- files */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
+.chip {
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  border-radius: 999px; padding: 7px 13px; font: inherit; font-size: 13px;
+  min-height: 34px;
+}
+.bubble.preview .fname {
+  font-size: 12.5px; color: var(--dim); margin-bottom: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.bubble img, .bubble video {
+  max-width: 100%; border-radius: 9px; display: block;
+}
+.bubble audio { width: 100%; }
+.turn.preview-wide { max-width: 100%; }
+
 /* ---------------------------------------------------------------- composer */
 #composer {
   display: flex; gap: 8px; padding: 9px 12px calc(env(safe-area-inset-bottom) + 9px);
@@ -154,9 +174,10 @@ button.icon {
   font-size: 16px;
 }
 #send {
-  width: 44px; border: none; border-radius: 12px;
-  background: var(--accent); color: var(--bg); font-size: 18px; flex: none;
+  width: 48px; min-height: 44px; border: none; border-radius: 13px;
+  background: var(--accent); color: var(--bg); font-size: 19px; flex: none;
 }
+#send:active { filter: brightness(.9); }
 #send:disabled { opacity: .4; }
 
 /* ---------------------------------------------------------------- sheet */
@@ -167,21 +188,30 @@ button.icon {
 #veil.open { display: block; }
 #sheet {
   position: absolute; left: 0; right: 0; bottom: 0;
-  background: var(--panel); border-radius: 18px 18px 0 0;
-  padding: 14px 14px calc(env(safe-area-inset-bottom) + 14px);
-  max-height: 82vh; overflow-y: auto;
+  background: var(--panel); border-radius: 20px 20px 0 0;
+  padding: 8px 14px calc(env(safe-area-inset-bottom) + 16px);
+  max-height: 84vh; overflow-y: auto;
+  animation: rise .16s ease-out;
 }
-#sheet h3 { margin: 2px 0 12px; font-size: 15px; }
+@keyframes rise { from { transform: translateY(14px); opacity: .6; } }
+/* The grab bar is not draggable; it is there so the sheet reads as a sheet. */
+#sheet::before {
+  content: ''; display: block; width: 38px; height: 4px; border-radius: 2px;
+  background: var(--line); margin: 4px auto 12px;
+}
+#sheet h3 { margin: 0 2px 12px; font-size: 16px; font-weight: 650; }
 .row {
   display: flex; align-items: center; gap: 10px; width: 100%;
-  padding: 12px; margin-bottom: 7px;
-  border: 1px solid var(--line); border-radius: 12px;
-  background: var(--bg); color: var(--ink); font: inherit; text-align: left;
+  min-height: 54px; padding: 13px 14px; margin-bottom: 8px;
+  border: 1px solid var(--line); border-radius: 13px;
+  background: var(--bg); color: var(--ink); font: inherit; font-size: 15px;
+  text-align: left;
 }
+.row:active { background: var(--line); }
 .row .grow { flex: 1; min-width: 0; }
 .row small { color: var(--dim); display: block; font-size: 12px; }
 .row.on { border-color: var(--accent); }
-.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .grid .row { margin: 0; }
 
 #gate { padding: 24px; max-width: 420px; margin: auto; }
@@ -228,6 +258,6 @@ button.icon {
 
 <div id="veil"><div id="sheet"></div></div>
 
-<script src="app.js?v=7"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>

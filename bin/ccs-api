@@ -281,6 +281,73 @@ def pane_choices(name):
     return {"question": question, "options": options}
 
 
+# --------------------------------------------------------------------------- files
+
+
+FILE_SKIP = {".git", "node_modules", "__pycache__", ".venv", "dist", "build"}
+FILE_MAX = 64 * 1024 * 1024
+TEXTY = {
+    ".txt": "text/plain", ".md": "text/markdown", ".json": "application/json",
+    ".py": "text/plain", ".js": "text/javascript", ".ts": "text/plain",
+    ".sh": "text/plain", ".yml": "text/plain", ".yaml": "text/plain",
+    ".css": "text/css", ".csv": "text/csv", ".log": "text/plain",
+}
+
+
+def inside(path):
+    """Resolve a request to a real path under the workspace, or nothing.
+
+    The API is reachable from the internet, so this is the boundary between
+    browsing your project and browsing your disk."""
+    root = os.path.realpath(WORKDIR)
+    full = os.path.realpath(os.path.join(root, (path or "").lstrip("/")))
+    if full == root or full.startswith(root + os.sep):
+        return full
+    return None
+
+
+def kind_of(name):
+    ext = os.path.splitext(name)[1].lower()
+    if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif"):
+        return "image"
+    if ext in (".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac"):
+        return "audio"
+    if ext in (".mp4", ".webm", ".mov", ".m4v"):
+        return "video"
+    if ext in (".html", ".htm"):
+        return "page"
+    if ext == ".pdf":
+        return "pdf"
+    if ext in TEXTY:
+        return "text"
+    return "file"
+
+
+def listing(path):
+    full = inside(path)
+    if not full or not os.path.isdir(full):
+        return None
+    rows = []
+    for name in sorted(os.listdir(full)):
+        if name.startswith(".") or name in FILE_SKIP:
+            continue
+        target = os.path.join(full, name)
+        try:
+            info = os.stat(target)
+        except OSError:
+            continue
+        rows.append({
+            "name": name,
+            "path": os.path.relpath(target, os.path.realpath(WORKDIR)),
+            "dir": os.path.isdir(target),
+            "size": 0 if os.path.isdir(target) else info.st_size,
+            "at": int(info.st_mtime),
+            "kind": "dir" if os.path.isdir(target) else kind_of(name),
+        })
+    rows.sort(key=lambda r: (not r["dir"], -r["at"]))
+    return rows
+
+
 # --------------------------------------------------------------------------- push
 
 
@@ -398,6 +465,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.history(query)
         if path == "/api/events":
             return self.events(query)
+        if path == "/api/files":
+            rows = listing((query.get("dir") or [""])[0])
+            if rows is None:
+                return self.reply(404, {"error": "no such directory"})
+            return self.reply(200, {"dir": (query.get("dir") or [""])[0],
+                                    "root": os.path.basename(WORKDIR),
+                                    "entries": rows})
+        if path == "/api/file":
+            return self.file((query.get("path") or [""])[0],
+                             (query.get("raw") or [""])[0] == "1")
         if path == "/api/push/key":
             if not ccs_push.available():
                 return self.reply(503, {"error": "cryptography not installed"})
@@ -590,6 +667,37 @@ class Handler(BaseHTTPRequestHandler):
         time.sleep(0.2)
         tmux("send-keys", "-t", name, "Enter")
         return self.reply(200, {"ok": True})
+
+    def file(self, wanted, raw):
+        full = inside(wanted)
+        if not full or not os.path.isfile(full):
+            return self.reply(404, {"error": "no such file"})
+        size = os.path.getsize(full)
+        if size > FILE_MAX:
+            return self.reply(413, {"error": "too large"})
+        kind = kind_of(os.path.basename(full))
+        ctype = (mimetypes.guess_type(full)[0]
+                 or TEXTY.get(os.path.splitext(full)[1].lower())
+                 or "application/octet-stream")
+        # A page from the workspace is served as a page, so it can be opened;
+        # everything else is served for viewing rather than for running.
+        if kind == "page" and not raw:
+            ctype = "text/html; charset=utf-8"
+        elif kind == "text":
+            ctype = "text/plain; charset=utf-8"
+        with open(full, "rb") as handle:
+            body = handle.read()
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Disposition", 'inline; filename="{}"'.format(
+            os.path.basename(full).replace('"', "")))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     # ---- static
 

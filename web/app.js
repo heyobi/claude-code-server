@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v7';
+const BUILD = 'v9';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -122,6 +122,8 @@ function addTurn(turn) {
   wrap.innerHTML =
     '<div class="bubble">' + render(turn.text) + '</div>' +
     '<div class="meta">' + [label, time].filter(Boolean).join(' · ') + '</div>';
+  const bar = turn.role === 'assistant' ? attachments(turn.text) : null;
+  if (bar) wrap.insertBefore(bar, wrap.lastElementChild);
   $('stream').appendChild(wrap);
 }
 
@@ -293,6 +295,7 @@ async function menuSheet() {
       const r = await post('/api/session', { action: 'new' });
       if (r.session) openSession(r.session);
     });
+    button(grid, '📁 Dosyalar', null, () => filesSheet(''));
     button(grid, '❌ Kapat', null, () => confirmSheet());
     // Rendered now, labelled later. Behind a promise it went missing entirely
     // the one time the state check threw, which is exactly when you need it.
@@ -344,6 +347,116 @@ function pickModel(provider) {
     });
     button(box, '◀ Geri', null, () => modelSheet());
   });
+}
+
+/* --------------------------------------------------------------------- files */
+
+// A path in an answer is usually something you want to look at. These are the
+// extensions where that is true; anything else stays plain text.
+const FILEISH = new RegExp(
+  '(?:^|[\\s(`"\'>])((?:[\\w.-]+/)*[\\w.-]+\\.' +
+  '(?:png|jpe?g|gif|webp|svg|avif|mp3|wav|ogg|m4a|flac|mp4|webm|mov|pdf|html?' +
+  '|md|csv|json|txt|log|py|js|ts|sh|ya?ml))(?=$|[\\s)`"\'.,:;])', 'gi');
+const ARTIFACT = /https:\/\/claude\.ai\/code\/artifact\/[\w-]+/gi;
+
+// An <img> or an <audio> cannot carry an Authorization header, so the token
+// rides in the query the way it already does for the event stream.
+function fileUrl(path, raw) {
+  return '/api/file?path=' + encodeURIComponent(path) +
+    (raw ? '&raw=1' : '') + '&token=' + encodeURIComponent(TOKEN);
+}
+
+function kindOf(name) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  if (['png','jpg','jpeg','gif','webp','svg','avif'].includes(ext)) return 'image';
+  if (['mp3','wav','ogg','m4a','flac'].includes(ext)) return 'audio';
+  if (['mp4','webm','mov'].includes(ext)) return 'video';
+  if (['html','htm'].includes(ext)) return 'page';
+  if (ext === 'pdf') return 'pdf';
+  return 'text';
+}
+
+const ICON = { image: '🖼', audio: '🎧', video: '🎬', page: '🌐', pdf: '📄',
+               text: '📄', dir: '📁', file: '📄' };
+
+// Shown under an answer that mentioned something openable.
+function attachments(text) {
+  const found = new Map();
+  let m;
+  while ((m = FILEISH.exec(text))) found.set(m[1], { path: m[1], kind: kindOf(m[1]) });
+  while ((m = ARTIFACT.exec(text))) found.set(m[0], { url: m[0], kind: 'page' });
+  if (!found.size) return null;
+  const bar = document.createElement('div');
+  bar.className = 'chips';
+  [...found.values()].slice(0, 6).forEach((item) => {
+    const chip = document.createElement('button');
+    chip.className = 'chip';
+    chip.textContent = (ICON[item.kind] || '📄') + ' ' +
+      (item.url ? 'artifact' : item.path.split('/').pop());
+    chip.onclick = () => (item.url ? window.open(item.url, '_blank')
+                                   : openFile(item.path, item.kind));
+    bar.appendChild(chip);
+  });
+  return bar;
+}
+
+// Media plays in place; a page or a PDF gets its own tab, because that is what
+// they are for.
+function openFile(path, kind) {
+  kind = kind || kindOf(path);
+  if (kind === 'page' || kind === 'pdf') {
+    window.open(fileUrl(path), '_blank');
+    return;
+  }
+  const card = document.createElement('div');
+  card.className = 'turn assistant';
+  const name = path.split('/').pop();
+  let inner = '';
+  if (kind === 'image') inner = '<img src="' + fileUrl(path) + '" alt="">';
+  else if (kind === 'audio') inner = '<audio controls src="' + fileUrl(path) + '"></audio>';
+  else if (kind === 'video') inner = '<video controls src="' + fileUrl(path) + '"></video>';
+  card.innerHTML = '<div class="bubble preview"><div class="fname">' + name +
+    '</div>' + inner + '</div><div class="meta"></div>';
+  $('stream').appendChild(card);
+  if (kind === 'text') {
+    fetch(fileUrl(path))
+      .then((r) => (r.ok ? r.text() : Promise.reject(r.status)))
+      .then((body) => {
+        card.querySelector('.bubble').innerHTML =
+          '<div class="fname">' + name + '</div>' +
+          '<div class="code"><pre>' + esc(body.slice(0, 20000)) + '</pre></div>';
+        toBottom(true);
+      })
+      .catch(() => { card.querySelector('.bubble').innerHTML =
+        '<div class="fname">' + name + '</div><p>Acilamadi.</p>'; });
+  }
+  toBottom(true);
+}
+
+async function filesSheet(dir) {
+  const data = await api('/api/files?dir=' + encodeURIComponent(dir || ''));
+  const here = data.dir || '';
+  sheet('📁 ' + (here || data.root), (box) => {
+    if (here) {
+      const up = here.split('/').slice(0, -1).join('/');
+      button(box, '◀ Yukari', null, () => filesSheet(up));
+    }
+    if (!data.entries.length) button(box, '(bos klasor)', null, () => {});
+    data.entries.forEach((entry) => {
+      const size = entry.dir ? '' : humanSize(entry.size);
+      button(box, (ICON[entry.kind] || '📄') + ' ' + entry.name, size, () => {
+        if (entry.dir) { filesSheet(entry.path); return; }
+        closeSheet();
+        openFile(entry.path, entry.kind);
+      });
+    });
+  });
+}
+
+function humanSize(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
 }
 
 /* ------------------------------------------------------------ notifications */
