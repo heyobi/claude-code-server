@@ -66,13 +66,55 @@ def token():
 TOKEN = token()
 
 
+FAILS = {}                 # client address -> [count, first seen, locked until]
+FAIL_LIMIT = 5
+FAIL_WINDOW = 600.0
+FAIL_LOCK = 900.0
+
+
+def locked_out(who):
+    """Guessing should be expensive. This endpoint can type into a shell, so a
+    handful of wrong tokens buys a quarter of an hour of silence rather than
+    another try."""
+    row = FAILS.get(who)
+    if not row:
+        return False
+    now = time.time()
+    if row[2] > now:
+        return True
+    if now - row[1] > FAIL_WINDOW:
+        FAILS.pop(who, None)
+    return False
+
+
+def note_failure(who):
+    now = time.time()
+    row = FAILS.get(who)
+    if not row or now - row[1] > FAIL_WINDOW:
+        row = [0, now, 0.0]
+    row[0] += 1
+    if row[0] >= FAIL_LIMIT:
+        row[2] = now + FAIL_LOCK
+        sys.stderr.write("locked out {} after {} bad tokens{}".format(
+            who, row[0], chr(10)))
+    FAILS[who] = row
+
+
 def authorised(handler, query):
     """EventSource cannot set headers, so the stream may carry it in the query."""
+    who = handler.client_address[0]
+    if locked_out(who):
+        return False
     header = handler.headers.get("Authorization") or ""
     if header.startswith("Bearer "):
-        return secrets.compare_digest(header[7:].strip(), TOKEN)
-    given = (query.get("token") or [""])[0]
-    return bool(given) and secrets.compare_digest(given, TOKEN)
+        given = header[7:].strip()
+    else:
+        given = (query.get("token") or [""])[0]
+    if given and secrets.compare_digest(given, TOKEN):
+        FAILS.pop(who, None)
+        return True
+    note_failure(who)
+    return False
 
 
 # --------------------------------------------------------------------------- model

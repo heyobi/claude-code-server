@@ -503,6 +503,12 @@ machine in your house. Be deliberate about it.
 - **Auto mode runs most commands without asking.** A vague instruction typed on
   a phone can do more than you meant. Say what you want precisely, or turn auto
   mode off.
+- **Think twice before putting the web app on the public internet.** One
+  `tailscale funnel` away is a real temptation, and what it publishes is an
+  endpoint that types into a shell running in auto mode. The token is long and
+  five wrong guesses lock an address out for fifteen minutes, but the token is
+  then the only thing between the internet and your machine — and so is every
+  line of the server in front of it. On a tailnet neither has to be perfect.
 - **Fill in the bot's allowlist.** Anyone who finds a Telegram bot can message
   it. `~/.claude/channels/telegram/access.json` is what stops them; with no
   `allowFrom` the bot answers whoever writes to it. The token file deserves
