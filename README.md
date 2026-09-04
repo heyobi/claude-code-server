@@ -279,6 +279,12 @@ the JOSE signature is the raw `r||s` pair rather than the DER the library hands
 back. A round trip — encrypt, then decrypt the way a browser would — catches
 both in a second.
 
+The other one is not in the crypto at all. `CCS_PUSH_CONTACT` ends up as the
+`sub` claim, and Apple checks it: a placeholder like `mailto:admin@localhost` is
+answered `403 BadJwtToken`, which reads like a signing problem and is not one.
+Any routable address or `https:` URL is accepted, and the default is a URL for
+that reason.
+
 ## Backends
 
 A backend is chosen by environment variables that Claude Code reads at startup,

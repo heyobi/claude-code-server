@@ -328,11 +328,14 @@ def notifier():
                 if not said:
                     continue
                 last = said[-1]
-                ccs_push.send_all({
+                sent = ccs_push.send_all({
                     "title": name,
                     "body": last["text"][:180],
                     "session": name,
                 })
+                for endpoint, status, detail in sent:
+                    sys.stderr.write("push {} {} {}{}".format(
+                        name, status, detail[:80], chr(10)))
         except Exception as exc:
             sys.stderr.write("notifier: {}{}".format(exc, chr(10)))
 

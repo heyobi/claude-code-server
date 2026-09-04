@@ -24,7 +24,21 @@ import urllib.request
 HOME = os.path.expanduser("~")
 KEYFILE = os.path.join(HOME, ".config", "claude-code-server", "vapid.json")
 SUBSFILE = os.path.join(HOME, ".claude", "claude-code-server", "push-subs.json")
-CONTACT = "mailto:admin@localhost"
+# RFC 8292 calls this the contact for whoever runs the server, and Apple checks
+# it: a mailto that is not a routable address comes back 403 BadJwtToken, with
+# nothing to say the subject line was the problem. A URL is always valid, so the
+# default is one; CCS_PUSH_CONTACT overrides it with your own address.
+DEFAULT_CONTACT = "https://github.com/heyobi/claude-code-server"
+
+
+def contact():
+    try:
+        from ccs_common import CFG
+        return CFG.get("CCS_PUSH_CONTACT") or DEFAULT_CONTACT
+    except Exception:
+        return DEFAULT_CONTACT
+
+
 TTL = 86400
 RECORD_SIZE = 4096
 
@@ -136,7 +150,7 @@ def vapid_header(endpoint):
     claims = {
         "aud": "{}://{}".format(parts.scheme, parts.netloc),
         "exp": int(time.time()) + 12 * 3600,
-        "sub": CONTACT,
+        "sub": contact(),
     }
     header = b64(json.dumps({"typ": "JWT", "alg": "ES256"},
                             separators=(",", ":")).encode())
