@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v11';
+const BUILD = 'v13';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -319,6 +319,8 @@ async function menuSheet() {
       if (r.session) openSession(r.session);
     });
     button(grid, '📁 Dosyalar', null, () => filesSheet(''));
+    button(grid, '⚡ Görevler', null, () => tasksSheet());
+    button(grid, '✏️ Yeniden adlandır', null, () => renameSheet());
     button(grid, '❌ Kapat', null, () => confirmSheet());
     // Rendered now, labelled later. Behind a promise it went missing entirely
     // the one time the state check threw, which is exactly when you need it.
@@ -347,15 +349,56 @@ function confirmSheet() {
   });
 }
 
+// A list of model ids tells you nothing about which to pick. These are the
+// distinctions that actually matter when choosing one.
+const FAMILY = [
+  [/opus/i,        'Karmaşık işler'],
+  [/fable/i,       'En zor işler'],
+  [/sonnet/i,      'Günlük işler için verimli'],
+  [/haiku/i,       'Hızlı cevaplar'],
+  [/gpt-oss/i,     'Açık ağırlıklı, farklı bir bakış'],
+  [/pro/i,         'Karmaşık işler, daha yavaş'],
+  [/flash-lite/i,  'En hızlı, en ucuz'],
+  [/flash/i,       'Dengeli — çoğu iş için'],
+];
+const EFFORT = { high: 'yüksek çaba', medium: 'orta çaba', low: 'düşük çaba' };
+
+function modelNote(id) {
+  if (!id) return 'Sunucudaki ayar ne diyorsa';
+  const hit = FAMILY.find(([re]) => re.test(id));
+  const tail = (id.match(/-(high|medium|low)$/) || [])[1];
+  return [hit && hit[1], tail && EFFORT[tail]].filter(Boolean).join(' · ') || id;
+}
+
+// "gemini-3.8-flash-medium" reads better as "Gemini 3.8 Flash".
+function modelTitle(id) {
+  if (!id) return 'Varsayılan';
+  const parts = id
+    .replace(/-(high|medium|low)$/, '')
+    .replace(/-(\d{8}|latest|preview)$/g, '')
+    // "opus-4-6" is one version number wearing a hyphen, not two words.
+    .replace(/(\d)-(\d)/g, '$1.$2')
+    .split('-');
+  return parts
+    .map((part) => (/^\d/.test(part) ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+    .join(' ');
+}
+
 async function modelSheet() {
   await refresh();
   const current = (known.sessions.find((s) => s.name === session) || {}).profile || '-';
-  sheet('Sağlayıcı', (box) => {
+  const model = (known.sessions.find((s) => s.name === session) || {}).model || '';
+  sheet('Model', (box) => {
     const list = group(box);
     known.profiles.forEach((p) => {
-      button(list, p.label, p.models.length + ' model',
+      button(list, p.label,
+        p.profile === current ? 'Şu an kullanılıyor' : p.models.length + ' model',
         () => pickModel(p), p.profile === current);
     });
+    const note = document.createElement('div');
+    note.className = 'sublabel';
+    note.textContent = 'Seçim oturumu yeniden başlatır, konuşma korunur';
+    box.appendChild(note);
   });
 }
 
@@ -363,7 +406,7 @@ function pickModel(provider) {
   sheet(provider.label, (box) => {
     const list = group(box);
     provider.models.forEach((m) => {
-      button(list, m || 'Varsayılan', null, async () => {
+      button(list, modelTitle(m), modelNote(m), async () => {
         closeSheet();
         note('Model değiştiriliyor, oturum yeniden başlıyor…');
         toBottom(true);
@@ -372,6 +415,56 @@ function pickModel(provider) {
     });
     button(box, '◀ Geri', null, () => modelSheet());
   });
+}
+
+/* ---------------------------------------------------------------- tasks */
+
+// Sessions are the jobs. A busy one is running; the spinner already knows how
+// long and how many tokens, so that is what the row says.
+async function tasksSheet() {
+  await refresh();
+  const busy = known.sessions.filter((s) => !s.ready);
+  const idle = known.sessions.filter((s) => s.ready);
+  sheet('Görevler', (box) => {
+    const running = document.createElement('div');
+    running.className = 'sublabel';
+    running.textContent = busy.length ? 'Çalışıyor' : 'Çalışan yok';
+    box.appendChild(running);
+    if (busy.length) {
+      const list = group(box);
+      busy.forEach((s) => {
+        const row = button(list, '⚡ ' + s.name,
+          [s.profile === '-' ? 'Claude' : s.profile, s.status].filter(Boolean).join(' · '),
+          () => { closeSheet(); openSession(s.name); });
+        const stop = document.createElement('span');
+        stop.className = 'stop';
+        stop.textContent = '■';
+        stop.onclick = async (e) => {
+          e.stopPropagation();
+          await post('/api/session', { action: 'interrupt', session: s.name });
+          tasksSheet();
+        };
+        row.appendChild(stop);
+      });
+    }
+    const done = document.createElement('div');
+    done.className = 'sublabel';
+    done.textContent = 'Hazır ' + idle.length;
+    box.appendChild(done);
+    const list = group(box);
+    idle.forEach((s) => {
+      button(list, s.name, s.profile === '-' ? 'Claude' : s.profile,
+        () => { closeSheet(); openSession(s.name); }, s.name === session);
+    });
+  });
+}
+
+async function renameSheet() {
+  const wanted = prompt('Yeni ad', session);
+  if (!wanted) return;
+  closeSheet();
+  const r = await post('/api/session', { action: 'rename', session, name: wanted });
+  if (r.session) openSession(r.session);
 }
 
 /* --------------------------------------------------------------------- files */

@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from ccs_common import (                      # noqa: E402  (path set above)
-    CFG, HOME, WORKDIR, _CACHE, cached, ccs, ccs_sessions, next_auto_name,
+    CFG, HOME, POOLDIR, WORKDIR, _CACHE, cached, ccs, ccs_sessions, next_auto_name,
     pane_progress, pane_ready, send_to_session, session_profile, tmux, transcript_of,
     turns_from,
 )
@@ -245,11 +245,23 @@ def manifest():
 
 
 def describe(name):
-    return {
+    """A session, and what it is doing.
+
+    A busy one is a running job: the spinner already says how long it has been
+    going and how many tokens it has spent, so pass that along rather than
+    inventing a progress bar.
+    """
+    ready = pane_ready(name)
+    row = {
         "name": name,
         "profile": session_profile(name),
-        "ready": pane_ready(name),
+        "ready": ready,
     }
+    if not ready:
+        live = pane_progress(name)
+        row["status"] = live["status"]
+        row["preview"] = live["text"][-120:]
+    return row
 
 
 def state():
@@ -650,6 +662,29 @@ class Handler(BaseHTTPRequestHandler):
                 _CACHE.pop("sessions", None)
                 fresh = [n for n in ccs_sessions() if n not in before]
             return self.reply(200, {"ok": True, "session": fresh[0] if fresh else None})
+        if action == "interrupt":
+            if name not in ccs_sessions():
+                return self.reply(404, {"error": "no such session"})
+            # Escape is what the TUI listens for. Stopping a turn is not the
+            # same as closing the session, and the session should survive it.
+            tmux("send-keys", "-t", name, "Escape")
+            return self.reply(200, {"ok": True})
+        if action == "rename":
+            wanted = (data.get("name") or "").strip()
+            if name not in ccs_sessions() or not wanted:
+                return self.reply(400, {"error": "bad request"})
+            fresh = "".join(c for c in wanted if c.isalnum() or c in "-_")[:48]
+            if not fresh or fresh in ccs_sessions():
+                return self.reply(400, {"error": "bad name"})
+            # The record is the id and the backend; both move with the name or
+            # the next session to be called this inherits them.
+            for part in ("uuid", "profile"):
+                old = os.path.join(POOLDIR, "{}.{}".format(name, part))
+                if os.path.exists(old):
+                    os.replace(old, os.path.join(POOLDIR, "{}.{}".format(fresh, part)))
+            tmux("rename-session", "-t", name, fresh)
+            _CACHE.pop("sessions", None)
+            return self.reply(200, {"ok": True, "session": fresh})
         if action == "close":
             if name not in ccs_sessions():
                 return self.reply(404, {"error": "no such session"})

@@ -173,6 +173,19 @@ button.icon:active { transform: scale(.9); background: var(--line); }
   border: 1px solid var(--line); background: var(--bg); color: var(--ink); font-size: 14px;
 }
 
+/* ---------------------------------------------------------------- tasks */
+.sublabel {
+  font-size: 12.5px; letter-spacing: .03em; text-transform: uppercase;
+  color: var(--dim); margin: 4px 4px 8px;
+}
+.stop {
+  margin-left: auto; width: 32px; height: 32px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; background: var(--line); color: var(--ink);
+  font-size: 11px;
+}
+.row.on .stop { color: var(--ink); }
+
 /* ---------------------------------------------------------------- files */
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
 .chip {
@@ -347,6 +360,6 @@ button.icon:active { transform: scale(.9); background: var(--line); }
 
 <div id="veil"><div id="sheet"></div></div>
 
-<script src="app.js?v=11"></script>
+<script src="app.js?v=13"></script>
 </body>
 </html>

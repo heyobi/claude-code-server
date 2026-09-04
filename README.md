@@ -265,6 +265,14 @@ The token is the only thing standing between anyone already on your tailnet and
 a shell on this machine, so treat `~/.config/claude-code-server/api-token` the
 way you would an SSH key. Delete it and restart to roll it.
 
+### Tasks
+
+A busy session is a running job, so the app shows them that way: what is
+working, for how long and on how many tokens, and a stop button that sends the
+interrupt the TUI listens for rather than closing the session. Sessions can be
+renamed from there too, which moves the id and the backend record with the name
+— leave either behind and the next session called that inherits it.
+
 ### Files
 
 Whatever a session produces is on the machine, which is not the same as being
