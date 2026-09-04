@@ -69,6 +69,8 @@ def sort_key(name):
 
 
 FALLBACK_DEPTH = 4      # enough to ride out a bad afternoon, short enough to read
+AUTO = "gemini-auto"    # one name, several deployments behind it
+AUTO_DEPTH = 6
 
 
 def render(models):
@@ -84,6 +86,20 @@ def render(models):
             "      api_key: os.environ/GEMINI_API_KEY",
         ]
 
+    # Falling back after a failure is not enough on its own: on the streaming
+    # path this gateway re-raises rather than falling, so the client sees the
+    # error, retries without streaming, and every message costs a wasted
+    # minute. A model group avoids the failure instead of recovering from it —
+    # several deployments under one name, and a deployment that starts
+    # refusing is put in cooldown and skipped.
+    for name in models[:AUTO_DEPTH]:
+        lines += [
+            "  - model_name: {}".format(AUTO),
+            "    litellm_params:",
+            "      model: gemini/{}".format(name),
+            "      api_key: os.environ/GEMINI_API_KEY",
+        ]
+
     # Free tier quota is counted per model, and a model can also simply be
     # busy: a 429 and a 503 turned up within an hour of each other, and each
     # stopped a session dead while five other models were answering fine.
@@ -93,6 +109,7 @@ def render(models):
         others = [m for m in models if m != name][:FALLBACK_DEPTH]
         if others:
             lines.append("    - {}: [{}]".format(name, ", ".join(others)))
+    lines.append("    - {}: [{}]".format(AUTO, ", ".join(models[:FALLBACK_DEPTH])))
     lines += [
         "  num_retries: 2",
         "  allowed_fails: 3",
@@ -121,6 +138,7 @@ def main():
     models = [m for m in models if not m.startswith("gemini-2.")]
 
     print("{} model(s):".format(len(models)))
+    print("  {}  (any of the first {})".format(AUTO, AUTO_DEPTH))
     for name in models:
         print("  " + name)
 

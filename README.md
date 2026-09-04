@@ -284,6 +284,16 @@ drops the ones that are not for conversation, writes the gateway config and
 restarts it — hardcoding model names goes stale the week a provider ships a new
 one.
 
+It also writes a `gemini-auto` group with several models behind one name, and
+that is what the profile should point at. Free tier quota is counted per model:
+one afternoon here produced a 503 "experiencing high demand" and, an hour later,
+a 429, each stopping a session dead while five other models answered fine.
+Fallbacks alone do not fix it, because on the streaming path this gateway
+re-raises instead of falling — the client sees the error, retries without
+streaming, and every message costs a wasted minute. A group avoids the failure
+rather than recovering from it: a deployment that starts refusing goes into
+cooldown and the next request is routed past it.
+
 The trade-off is the one from the previous section: on another provider you keep
 the sessions, the pool and the bot, and you lose Remote Control.
 
