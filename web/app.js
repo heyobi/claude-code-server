@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v10';
+const BUILD = 'v11';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -254,15 +254,37 @@ async function openSession(name) {
 
 function sheet(title, build) {
   const box = $('sheet');
-  box.innerHTML = '<h3>' + title + '</h3>';
+  box.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'shead';
+  const shut = document.createElement('button');
+  shut.className = 'icon';
+  shut.textContent = '✕';
+  shut.onclick = closeSheet;
+  const name = document.createElement('h3');
+  name.textContent = title;
+  const pad = document.createElement('span');
+  pad.className = 'spacer';
+  head.append(shut, name, pad);
+  box.appendChild(head);
   build(box);
   $('veil').classList.add('open');
+}
+
+// Rows added to one of these share a surface; rows added straight to the sheet
+// stand alone.
+function group(parent) {
+  const box = document.createElement('div');
+  box.className = 'group';
+  parent.appendChild(box);
+  return box;
 }
 const closeSheet = () => $('veil').classList.remove('open');
 
 function button(parent, label, sub, on, active) {
   const b = document.createElement('button');
-  b.className = 'row' + (active ? ' on' : '');
+  const solo = parent.id === 'sheet' ? ' solo' : '';
+  b.className = 'row' + solo + (active ? ' on' : '');
   b.innerHTML = '<span class="grow">' + label +
                 (sub ? '<small>' + sub + '</small>' : '') + '</span>' +
                 (active ? '<span>✓</span>' : '');
@@ -274,8 +296,9 @@ function button(parent, label, sub, on, active) {
 async function sessionSheet() {
   await refresh();
   sheet('Oturumlar', (box) => {
+    const list = group(box);
     known.sessions.forEach((s) => {
-      button(box, s.name, (s.profile === '-' ? 'Claude' : s.profile) +
+      button(list, s.name, (s.profile === '-' ? 'Claude' : s.profile) +
              (s.ready ? '' : ' · çalışıyor'),
         () => { closeSheet(); openSession(s.name); }, s.name === session);
     });
@@ -328,17 +351,19 @@ async function modelSheet() {
   await refresh();
   const current = (known.sessions.find((s) => s.name === session) || {}).profile || '-';
   sheet('Sağlayıcı', (box) => {
+    const list = group(box);
     known.profiles.forEach((p) => {
-      button(box, p.label, p.models.length + ' model',
+      button(list, p.label, p.models.length + ' model',
         () => pickModel(p), p.profile === current);
     });
   });
 }
 
 function pickModel(provider) {
-  sheet(provider.label + ' — model', (box) => {
+  sheet(provider.label, (box) => {
+    const list = group(box);
     provider.models.forEach((m) => {
-      button(box, m || 'Varsayılan', null, async () => {
+      button(list, m || 'Varsayılan', null, async () => {
         closeSheet();
         note('Model değiştiriliyor, oturum yeniden başlıyor…');
         toBottom(true);
@@ -442,9 +467,10 @@ async function filesSheet(dir) {
       button(box, '◀ Yukari', null, () => filesSheet(up));
     }
     if (!data.entries.length) button(box, '(bos klasor)', null, () => {});
+    const list = data.entries.length ? group(box) : box;
     data.entries.forEach((entry) => {
       const size = entry.dir ? '' : humanSize(entry.size);
-      button(box, (ICON[entry.kind] || '📄') + ' ' + entry.name, size, () => {
+      button(list, (ICON[entry.kind] || '📄') + ' ' + entry.name, size, () => {
         if (entry.dir) { filesSheet(entry.path); return; }
         closeSheet();
         openFile(entry.path, entry.kind);

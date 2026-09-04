@@ -52,7 +52,10 @@
      fires by accident. */
   touch-action: manipulation;
 }
-html, body { height: 100%; }
+/* One scroller, and it is not the document. A fixed bar drifts on iOS when
+   the page itself can move, which is what made the composer slide while
+   reading. */
+html, body { height: 100%; overflow: hidden; }
 body {
   margin: 0; background: var(--bg); color: var(--ink);
   font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -80,23 +83,24 @@ header {
 .dot.busy { background: var(--warn); animation: pulse 1s infinite; }
 .dot.off { background: var(--dim); }
 @keyframes pulse { 50% { opacity: .3; } }
-/* 44px is the smallest thing a thumb hits reliably, and these were 38. The
-   inset highlight along the top edge is what reads as glass rather than as a
-   grey box: a lit rim, a soft drop, and whatever is behind showing through. */
+/* Round, filled, no visible border. A drawn outline is what made these read
+   as boxes with an icon in them rather than as buttons. 44px because that is
+   the smallest thing a thumb hits reliably. */
 button.icon {
-  background: var(--key); border: 1px solid var(--glass-edge); color: var(--ink);
-  width: 44px; height: 44px; border-radius: 14px; font-size: 19px; flex: none;
+  background: var(--key); border: none; color: var(--ink);
+  width: 44px; height: 44px; border-radius: 50%; font-size: 19px; flex: none;
   display: flex; align-items: center; justify-content: center;
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
-  box-shadow: 0 1px 3px var(--glass-shade), inset 0 1px 0 var(--glass-edge);
-  transition: transform .12s ease, background .12s ease;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 1px 4px var(--glass-shade);
+  transition: transform .14s ease, background .14s ease;
 }
-button.icon:active { transform: scale(.94); background: var(--line); }
+button.icon:active { transform: scale(.9); background: var(--line); }
 
 /* ---------------------------------------------------------------- stream */
 #stream {
   position: fixed; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: calc(env(safe-area-inset-top) + var(--bar-top)) 12px
            calc(env(safe-area-inset-bottom) + var(--bar-bottom));
 }
@@ -247,22 +251,57 @@ button.icon:active { transform: scale(.94); background: var(--line); }
   content: ''; display: block; width: 38px; height: 4px; border-radius: 2px;
   background: var(--line); margin: 4px auto 12px;
 }
-#sheet h3 { margin: 0 2px 12px; font-size: 16px; font-weight: 650; }
-.row {
-  display: flex; align-items: center; gap: 10px; width: 100%;
-  min-height: 54px; padding: 13px 15px; margin-bottom: 8px;
-  border: 1px solid var(--glass-edge); border-radius: 15px;
-  background: var(--key); color: var(--ink); font: inherit; font-size: 15px;
-  text-align: left;
-  box-shadow: 0 1px 2px var(--glass-shade), inset 0 1px 0 var(--glass-edge);
-  transition: transform .12s ease;
+/* Close on the left, title centred: the shape of a sheet on this platform. */
+.shead {
+  display: flex; align-items: center; gap: 10px; margin: 0 0 14px;
 }
-.row:active { transform: scale(.985); background: var(--line); }
+.shead h3 {
+  flex: 1; margin: 0; font-size: 17px; font-weight: 650; text-align: center;
+}
+.shead .icon { width: 36px; height: 36px; font-size: 16px; }
+.shead .spacer { width: 36px; flex: none; }
+/* Rows live in one surface with hairlines between them, which is how a list
+   on this platform looks. Bordering each row separately turned a menu into a
+   stack of unrelated boxes. */
+.group {
+  background: var(--key); border-radius: 16px; overflow: hidden;
+  margin-bottom: 12px;
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 1px 4px var(--glass-shade);
+}
+.row {
+  display: flex; align-items: center; gap: 11px; width: 100%;
+  min-height: 54px; padding: 13px 16px;
+  border: none; border-bottom: 1px solid var(--line);
+  background: none; color: var(--ink); font: inherit; font-size: 15.5px;
+  text-align: left;
+  transition: background .12s ease;
+}
+.group .row:last-child { border-bottom: none; }
+.row:active { background: var(--line); }
+/* Standalone rows keep their own surface. */
+.row.solo {
+  background: var(--key); border-radius: 16px; margin-bottom: 10px;
+  border-bottom: none;
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 1px 4px var(--glass-shade);
+}
 .row .grow { flex: 1; min-width: 0; }
-.row small { color: var(--dim); display: block; font-size: 12px; }
-.row.on { border-color: var(--accent); }
-.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.grid .row { margin: 0; }
+.row small { color: var(--dim); display: block; font-size: 12.5px; margin-top: 1px; }
+.row.on small { color: var(--accent); opacity: .8; }
+/* The chosen row: tinted and coloured, since there is no longer a border to
+   change. */
+.row.on { color: var(--accent); font-weight: 600; }
+.row.on::after { content: '✓'; margin-left: auto; font-weight: 700; }
+.row.on > span:last-child { display: none; }
+.grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
+  background: var(--line); border-radius: 16px; overflow: hidden;
+  margin-bottom: 12px;
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 1px 4px var(--glass-shade);
+}
+.grid .row {
+  margin: 0; border: none; border-radius: 0; background: var(--key);
+  box-shadow: none; min-height: 62px;
+}
 
 #gate { padding: 24px; max-width: 420px; margin: auto; }
 #gate input {
@@ -308,6 +347,6 @@ button.icon:active { transform: scale(.94); background: var(--line); }
 
 <div id="veil"><div id="sheet"></div></div>
 
-<script src="app.js?v=10"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>
