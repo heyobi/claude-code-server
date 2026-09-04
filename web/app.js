@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v22';
+const BUILD = 'v24';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -76,6 +76,13 @@ function render(text) {
       const nl = part.indexOf('\n');
       const lang = nl > 0 ? part.slice(0, nl).trim() : '';
       const code = nl > 0 ? part.slice(nl + 1) : part;
+      // A diagram is meant to be looked at, not read as source.
+      if (/^mermaid$/i.test(lang)) {
+        // The source goes in as text, not as an attribute: diagram source is
+        // full of quotes and the first one ends the attribute.
+        out.push('<div class="mmd pending">' + esc(code) + '</div>');
+        return;
+      }
       out.push('<div class="code">' + (lang ? '<span class="lang">' + esc(lang) + '</span>' : '')
                + '<pre>' + esc(code.replace(/\n$/, '')) + '</pre></div>');
       return;
@@ -161,6 +168,7 @@ function addTurn(turn) {
   const bar = attachments(turn.text);
   if (bar) wrap.insertBefore(bar, wrap.lastElementChild);
   $('stream').appendChild(wrap);
+  drawDiagrams(wrap);
 }
 
 let liveEl = null;
@@ -585,6 +593,69 @@ async function takeFiles(files) {
   }
 }
 
+/* -------------------------------------------------------------- diagrams */
+
+// Loaded the first time a diagram turns up and not before: it is the largest
+// thing this app could pull in, and most conversations never need it.
+let mermaidReady = null;
+function getMermaid() {
+  if (!mermaidReady) {
+    mermaidReady = import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs')
+      .then((mod) => {
+        mod.default.initialize({
+          startOnLoad: false,
+          // Labels in these diagrams carry <br/> and <b>; strict escapes them
+          // into the picture. antiscript keeps the markup and drops scripts.
+          securityLevel: 'antiscript',
+          theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default',
+        });
+        return mod.default;
+      });
+  }
+  return mermaidReady;
+}
+
+let drawn = 0;
+async function drawDiagrams(scope) {
+  const blocks = [...scope.querySelectorAll('.mmd.pending')];
+  if (!blocks.length) return;
+  let mermaid;
+  try {
+    mermaid = await getMermaid();
+  } catch {
+    // Offline, or the CDN is unreachable. The source is still the answer.
+    blocks.forEach((el) => {
+      const src = el.textContent;
+      el.className = 'code';
+      el.innerHTML = '<span class="lang">mermaid</span><pre>' + esc(src) + '</pre>';
+    });
+    return;
+  }
+  for (const el of blocks) {
+    const src = el.textContent;
+    el.classList.remove('pending');
+    try {
+      const { svg } = await mermaid.render('mmd' + (++drawn), src);
+      el.innerHTML = svg;
+      el.onclick = () => openDiagram(el.innerHTML);
+    } catch (e) {
+      el.className = 'code';
+      el.innerHTML = '<span class="lang">mermaid</span><pre>' + esc(src) + '</pre>';
+    }
+  }
+  toBottom();
+}
+
+// A diagram on a phone is smaller than it wants to be, so tapping opens it.
+function openDiagram(svg) {
+  sheet('Diyagram', (box) => {
+    const holder = document.createElement('div');
+    holder.className = 'mmdbig';
+    holder.innerHTML = svg;
+    box.appendChild(holder);
+  });
+}
+
 /* ---------------------------------------------------------------- tools */
 
 // What a call was actually about, in a few words. The first argument is almost
@@ -995,7 +1066,8 @@ $('tokenSave').onclick = () => {
   boot();
 };
 
-$('who').onclick = sessionSheet;
+$('who').onclick = () => { tap(); sessionSheet(); };
+$('back').onclick = () => { tap(); sessionSheet(); };
 $('btnMenu').onclick = menuSheet;
 $('veil').onclick = (e) => { if (e.target === $('veil')) closeSheet(); };
 $('popveil').onclick = closePop;
@@ -1036,6 +1108,18 @@ $('composer').onsubmit = async (e) => {
   }
   toBottom(true);
 };
+
+// An open stream is how the server knows nobody needs a notification, so it
+// has to mean "on screen" rather than "app not killed". Backgrounded, we let go
+// of it; back in front, we pick up where the transcript left off.
+document.addEventListener('visibilitychange', () => {
+  if (!session) return;
+  if (document.hidden) {
+    if (stream) { stream.close(); stream = null; }
+  } else if (!stream) {
+    listen();
+  }
+});
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});

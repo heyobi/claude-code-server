@@ -307,6 +307,11 @@ way for a decoration to fail.
 
 ### Tasks
 
+Diagrams in an answer are drawn rather than printed. The library is loaded the
+first time one turns up and not before — it is the largest thing this app could
+pull in, and most conversations never contain one; without a network it falls
+back to the source, which is still the answer.
+
 A busy session is a running job, so the app shows them that way: what is
 working, for how long and on how many tokens, and a stop button that sends the
 interrupt the TUI listens for rather than closing the session. Sessions can be
@@ -349,6 +354,12 @@ screen and a buzz is just noise.
 
 Turn it on from the menu. On iOS the app has to be on the Home Screen first;
 Safari does not offer push to a page in a tab.
+
+"No stream open" has to mean "not on screen", not "app not killed", so the
+client lets go of the stream when it goes to the background and picks it up
+again when it comes back. Otherwise an app left open in the background counts as
+watching and nothing is ever sent. A session appearing is also worth knowing
+about, so that is announced too.
 
 This is the one part that needs a library outside the standard one: RFC 8291
 wants ECDH on P-256 and RFC 8292 wants an ES256 signature. `python3-cryptography`

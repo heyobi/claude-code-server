@@ -311,6 +311,21 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 #pop .row { min-height: 48px; padding: 11px 14px; font-size: 15px; }
 #popveil { -webkit-backdrop-filter: blur(1px); backdrop-filter: blur(1px); }
 
+/* -------------------------------------------------------------- diagrams */
+.bubble .mmd {
+  margin: 10px 0; padding: 10px; border-radius: 12px;
+  background: var(--code); border: 1px solid var(--line);
+  overflow-x: auto; text-align: center;
+}
+/* Before it is drawn it is source, and source should not be laid out as prose. */
+.bubble .mmd.pending {
+  white-space: pre; text-align: left; color: var(--dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+}
+.bubble .mmd svg { max-width: 100%; height: auto; }
+.mmdbig { overflow: auto; max-height: 70vh; text-align: center; }
+.mmdbig svg { min-width: 100%; height: auto; }
+
 /* ------------------------------------------------------------ chat list */
 /* A session row is a conversation, so it shows what the conversation was
    about, not just what it is called. */
@@ -489,6 +504,7 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
   flex: 1; margin: 0; font-size: 17px; font-weight: 650; text-align: center;
 }
 .shead .icon { width: 36px; height: 36px; font-size: 16px; }
+#back { font-size: 26px; line-height: 1; padding-bottom: 3px; }
 .shead .spacer { width: 36px; flex: none; }
 /* Rows live in one surface with hairlines between them, which is how a list
    on this platform looks. Bordering each row separately turned a menu into a
@@ -580,6 +596,7 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 
 <div id="app" class="hide" style="display:contents">
   <header>
+    <button class="icon" id="back" title="Oturumlar">‹</button>
     <div id="who">
       <div id="name">—</div>
       <div id="sub"><span class="dot off"></span><span id="statusText">bağlanıyor…</span></div>
@@ -603,6 +620,6 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 <div id="veil"><div id="sheet"></div></div>
 <div id="popveil"><div id="pop"></div></div>
 
-<script src="app.js?v=22"></script>
+<script src="app.js?v=24"></script>
 </body>
 </html>

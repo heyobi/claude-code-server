@@ -377,6 +377,8 @@ def listing(path):
 
 VIEWERS = {}               # session -> how many streams are open on it
 SEEN = {}                  # session -> transcript offset already accounted for
+KNOWN_SESSIONS = set()     # so a session appearing can be announced
+STARTED = [False]          # everything is new on the first pass; that is not news
 VIEW_LOCK = threading.Lock()
 WATCH_POLL = 3.0
 
@@ -402,7 +404,16 @@ def notifier():
         time.sleep(WATCH_POLL)
         try:
             _CACHE.pop("sessions", None)
-            for name in ccs_sessions():
+            live = ccs_sessions()
+            KNOWN_SESSIONS.intersection_update(live)
+            for name in live:
+                if name not in KNOWN_SESSIONS:
+                    KNOWN_SESSIONS.add(name)
+                    # Not on the first pass: everything is new when we start.
+                    if STARTED[0]:
+                        ccs_push.send_all({"title": name,
+                                           "body": "Yeni oturum açıldı",
+                                           "session": name})
                 path = transcript_of(name)
                 if not path:
                     continue
@@ -427,6 +438,7 @@ def notifier():
                 for endpoint, status, detail in sent:
                     sys.stderr.write("push {} {} {}{}".format(
                         name, status, detail[:80], chr(10)))
+            STARTED[0] = True
         except Exception as exc:
             sys.stderr.write("notifier: {}{}".format(exc, chr(10)))
 
