@@ -1,8 +1,8 @@
 /* The shell is worth caching so the app opens instantly and survives a moment
  * without the tailnet. Anything under /api never is: stale session state is
  * worse than no session state. */
-const SHELL = 'ccs-shell-v6';
-const FILES = ['./', './index.html', './app.js?v=5', 
+const SHELL = 'ccs-shell-v8';
+const FILES = ['./', './index.html', './app.js?v=7', 
                './icon-180.png', './icon-512.png'];
 
 self.addEventListener('install', (event) => {

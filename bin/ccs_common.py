@@ -236,6 +236,51 @@ def pane_ready(name):
     return any(re.match(r'^\s*[>\u276f]', line) for line in tail)
 
 
+SPINNER = re.compile(r"[✽✻✳✶✢·*]\s+(\w[\w ]*)…\s*\(([^)]*)\)")
+# The pane carries the answer and also the furniture around it: the spinner,
+# the finished-in-Ns line, and the rotating tips. None of that is the answer.
+DONE_LINE = re.compile(r"[✻✽✳✶✢]\s+\w+ for .*· done")
+CHROME = ("⎿", "auto mode on", "for shortcuts", "esc to interrupt",
+          "Tip:", "free reviews left")
+
+
+def pane_progress(name):
+    """What the session is saying right now, before it is written down.
+
+    A turn only reaches the transcript once it is finished, so a client reading
+    the transcript alone waits in silence through the whole answer. The pane has
+    it as it arrives — the terminal is being drawn into, after all. This reads
+    that, which means it is limited to what fits on screen and is a preview
+    rather than a record: the real text arrives with the turn.
+    """
+    lines = [l.rstrip() for l in tmux("capture-pane", "-p", "-t", name).splitlines()]
+
+    status = ""
+    for line in reversed(lines):
+        found = SPINNER.search(line)
+        if found:
+            status = found.group(2).strip()
+            break
+
+    start = None
+    for index, line in enumerate(lines):
+        if line.lstrip().startswith("●"):
+            start = index
+    if start is None:
+        return {"text": "", "status": status}
+
+    body = []
+    for line in lines[start:]:
+        bare = line.strip()
+        if line.startswith("─") or bare.startswith("❯"):
+            break
+        if (not bare or SPINNER.search(line) or DONE_LINE.search(line)
+                or any(c in line for c in CHROME)):
+            continue
+        body.append(bare[2:].strip() if bare.startswith("● ") else bare)
+    return {"text": "\n".join(body).strip(), "status": status}
+
+
 def wait_ready(name, limit=45.0):
     began = time.time()
     while time.time() - began < limit:

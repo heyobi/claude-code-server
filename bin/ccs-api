@@ -30,7 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from ccs_common import (                      # noqa: E402  (path set above)
     CFG, HOME, WORKDIR, _CACHE, cached, ccs, ccs_sessions, next_auto_name,
-    pane_ready, send_to_session, session_profile, tmux, transcript_of,
+    pane_progress, pane_ready, send_to_session, session_profile, tmux, transcript_of,
     turns_from,
 )
 import ccs_push                              # noqa: E402  (path set above)
@@ -39,7 +39,7 @@ WEB = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
 TOKEN_FILE = os.path.join(HOME, ".config", "claude-code-server", "api-token")
 PROFILES = os.path.join(HOME, ".config", "claude-code-server", "profiles")
 
-TAIL_POLL = 1.0        # seconds between transcript checks while streaming
+TAIL_POLL = 0.8        # seconds between transcript checks while streaming
 HEARTBEAT = 15.0       # keep intermediaries from closing an idle SSE stream
 HISTORY_MAX = 400      # turns sent on a cold load
 
@@ -478,6 +478,7 @@ class Handler(BaseHTTPRequestHandler):
         last_beat = time.time()
         was_ready = None
         prompt_shown = None
+        shown = ""
         watching(name, +1)
         try:
             while True:
@@ -499,6 +500,19 @@ class Handler(BaseHTTPRequestHandler):
                     was_ready = ready
                     self.emit("status", {"ready": ready,
                                          "profile": session_profile(name)})
+                    if ready and shown:
+                        shown = ""       # the finished turn replaces the preview
+                        self.emit("partial", {"text": "", "status": ""})
+
+                # While it is generating, the answer exists only on the pane.
+                # Reading it there is what makes the client feel connected to a
+                # session rather than waiting on one.
+                if not ready:
+                    live = pane_progress(name)
+                    stamp = live["text"] + "|" + live["status"]
+                    if stamp != shown:
+                        shown = stamp
+                        self.emit("partial", live)
 
                 prompt = pane_choices(name) if not ready else None
                 fingerprint = json.dumps(prompt, sort_keys=True) if prompt else None

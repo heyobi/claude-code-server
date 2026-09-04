@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v5';
+const BUILD = 'v7';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -49,17 +49,62 @@ const post = (path, body) =>
 
 /* ------------------------------------------------------------ rendering */
 
-// Deliberately small: fenced blocks, inline code, bold. Anything cleverer
-// starts fighting with the text the model actually wrote.
+// Enough markdown to read an answer by: fences, headings, lists, tables of the
+// simple kind, and the inline marks. Deliberately not a full parser — the text
+// is prose from a model, not a document, and a parser that tries too hard
+// mangles the code in it.
+function esc(text) {
+  return text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+
+function inline(text) {
+  return esc(text)
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+             '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g,
+             '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+}
+
 function render(text) {
-  const escape = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-  const blocks = text.split(/```/);
-  return blocks.map((part, i) => {
-    if (i % 2) return '<pre>' + escape(part.replace(/^[a-z]*\n/i, '')) + '</pre>';
-    return escape(part)
-      .replace(/`([^`\n]+)`/g, '<code>$1</code>')
-      .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
-  }).join('');
+  const out = [];
+  const blocks = String(text).split(/```/);
+  blocks.forEach((part, i) => {
+    if (i % 2) {
+      const nl = part.indexOf('\n');
+      const lang = nl > 0 ? part.slice(0, nl).trim() : '';
+      const code = nl > 0 ? part.slice(nl + 1) : part;
+      out.push('<div class="code">' + (lang ? '<span class="lang">' + esc(lang) + '</span>' : '')
+               + '<pre>' + esc(code.replace(/\n$/, '')) + '</pre></div>');
+      return;
+    }
+    let list = null;
+    const flush = () => { if (list) { out.push('</' + list + '>'); list = null; } };
+    part.split('\n').forEach((line) => {
+      const head = line.match(/^(#{1,4})\s+(.*)$/);
+      const bullet = line.match(/^\s*[-*+]\s+(.*)$/);
+      const number = line.match(/^\s*\d+[.)]\s+(.*)$/);
+      const quote = line.match(/^>\s?(.*)$/);
+      if (head) { flush(); out.push('<h' + (head[1].length + 2) + '>' + inline(head[2])
+                                    + '</h' + (head[1].length + 2) + '>'); return; }
+      if (/^\s*([-*_])\1{2,}\s*$/.test(line)) { flush(); out.push('<hr>'); return; }
+      if (bullet) {
+        if (list !== 'ul') { flush(); out.push('<ul>'); list = 'ul'; }
+        out.push('<li>' + inline(bullet[1]) + '</li>'); return;
+      }
+      if (number) {
+        if (list !== 'ol') { flush(); out.push('<ol>'); list = 'ol'; }
+        out.push('<li>' + inline(number[1]) + '</li>'); return;
+      }
+      flush();
+      if (quote) { out.push('<blockquote>' + inline(quote[1]) + '</blockquote>'); return; }
+      if (line.trim()) out.push('<p>' + inline(line) + '</p>');
+    });
+    flush();
+  });
+  return out.join('');
 }
 
 function modelLabel(model) {
@@ -78,6 +123,27 @@ function addTurn(turn) {
     '<div class="bubble">' + render(turn.text) + '</div>' +
     '<div class="meta">' + [label, time].filter(Boolean).join(' · ') + '</div>';
   $('stream').appendChild(wrap);
+}
+
+let liveEl = null;
+
+// The answer as it is being written. Replaced by the real turn when that lands,
+// so this never becomes the record of anything — it is a window, not a log.
+function showLive(text, status) {
+  if (!text && !status) {
+    if (liveEl) { liveEl.remove(); liveEl = null; }
+    return;
+  }
+  if (!liveEl) {
+    liveEl = document.createElement('div');
+    liveEl.className = 'turn assistant live';
+    liveEl.innerHTML = '<div class="bubble"></div><div class="meta"></div>';
+    $('stream').appendChild(liveEl);
+  }
+  liveEl.querySelector('.bubble').innerHTML =
+    render(text) + '<span class="caret"></span>';
+  liveEl.querySelector('.meta').textContent = status || 'yazıyor…';
+  toBottom();
 }
 
 function note(text) {
@@ -134,8 +200,13 @@ function listen() {
   stream.addEventListener('turn', (e) => {
     const turn = JSON.parse(e.data);
     offset = turn.offset || offset;
+    showLive('', '');
     addTurn(turn);
     toBottom();
+  });
+  stream.addEventListener('partial', (e) => {
+    const live = JSON.parse(e.data);
+    showLive(live.text || '', live.status || '');
   });
   stream.addEventListener('status', (e) => {
     const s = JSON.parse(e.data);
@@ -164,6 +235,7 @@ async function openSession(name) {
   session = name;
   store.session = name;
   seen = new Set();
+  liveEl = null;
   $('stream').innerHTML = '';
   $('name').textContent = name;
   setStatus(null, null);
