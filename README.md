@@ -370,6 +370,21 @@ measured more than once, too — an installed app reports the full screen height
 for its window until the layout settles, which is exactly when a script at the
 end of the body runs.
 
+The message box is a `contenteditable` region rather than a textarea, for one
+reason: iOS puts an accessory bar over the keyboard for form fields — previous,
+next, and a tick — with no way to turn it off, and it costs a bar's height of
+screen above the composer for three controls that do nothing here. A
+contenteditable gets no accessory bar. `plaintext-only` is set from script
+rather than in the markup, because a browser that does not know the value
+treats the whole attribute as invalid and leaves the box uneditable, which is a
+worse failure than a pasted `<b>`.
+
+Whether a keyboard is up is decided by the field's focus as well as the visual
+viewport. The viewport shrinks on some platforms and iOS scrolls the page
+instead, so it cannot be asked on its own — but wherever the keyboard came
+from, the field it came for has focus. The composer drops its clearance while
+one is up: the keyboard is the floor then.
+
 Nothing traps you behind the keyboard. Dragging the conversation dismisses it,
 so does tapping anything in it that is not a control, and the layout puts the
 composer on the keyboard's top edge rather than somewhere near it.
@@ -454,6 +469,13 @@ web app could not cover on its own. `ccs-api` watches every session's transcript
 and sends a Web Push when an answer appears — but only when no stream is open on
 that session, because if the app is in front of you the answer is already on
 screen and a buzz is just noise.
+
+Permission is asked for once; staying subscribed is not the user's problem
+after that. Every launch, and every return to the app, puts the subscription
+back — a reinstall, a new service worker, or an endpoint the push service
+retires all leave notifications quietly off, and the only symptom is silence.
+The server keys subscriptions on their endpoint, so putting the same one back
+is an update rather than a second subscriber.
 
 Turn it on from the menu. On iOS the app has to be on the Home Screen first;
 Safari does not offer push to a page in a tab.

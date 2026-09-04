@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v38';
+const BUILD = 'v39';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -1273,6 +1273,30 @@ async function pushState() {
   }
 }
 
+// Granting permission is a one-off; staying subscribed should not be. A
+// reinstall, a new service worker, an endpoint the push service retires — any
+// of them leaves notifications quietly off with nothing to see but silence.
+// So every launch puts the subscription back, which the server takes as an
+// update rather than a second subscriber because it is keyed on the endpoint.
+async function keepPush() {
+  try {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    if (!('PushManager' in window) || !('serviceWorker' in navigator)) return;
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      const { key } = await api('/api/push/key');
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: keyBytes(key),
+      });
+    }
+    await post('/api/push/subscribe', sub.toJSON());
+  } catch (e) {
+    // Nothing to do and nothing worth saying: the menu shows the real state.
+  }
+}
+
 async function togglePush() {
   if (!('PushManager' in window) || typeof Notification === 'undefined') {
     note('Bildirim bu baglamda yok. iOS: Paylas > Ana Ekrana Ekle, sonra uygulamadan ac.');
@@ -1321,6 +1345,7 @@ async function boot() {
     return;                       // gate() already ran on 401
   }
   paintModel();
+  keepPush();
   document.title = known.app || document.title;
   const brand = $('brand');
   if (brand && known.app) brand.textContent = known.app;
@@ -1344,10 +1369,27 @@ $('veil').onclick = (e) => { if (e.target === $('veil')) closeSheet(); };
 $('popveil').onclick = closePop;
 
 const text = $('text');
-text.addEventListener('input', () => {
-  text.style.height = 'auto';
-  text.style.height = Math.min(text.scrollHeight, 130) + 'px';
-});
+// A contenteditable holds text, not a value, and an empty one still holds a
+// stray line break after everything is deleted.
+const typedText = () => (text.textContent || '').replace(/\u00a0/g, ' ');
+const clearText = () => { text.textContent = ''; };
+// plaintext-only is what makes a contenteditable behave like an input —
+// pasted markup arrives as text, Return makes a line and not a paragraph. It
+// is set from here rather than in the markup because a browser that does not
+// know the value treats the whole attribute as invalid and leaves the box
+// uneditable, which is a worse failure than a stray <b>.
+text.setAttribute('contenteditable', 'plaintext-only');
+if (text.contentEditable !== 'plaintext-only') {
+  text.setAttribute('contenteditable', 'true');
+  text.addEventListener('paste', (e) => {
+    e.preventDefault();
+    const plain = (e.clipboardData || window.clipboardData).getData('text');
+    document.execCommand('insertText', false, plain);
+  });
+}
+
+// It grows by itself now; this only keeps the last line in view.
+text.addEventListener('input', () => toBottom());
 text.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('composer').requestSubmit(); }
 });
@@ -1363,7 +1405,7 @@ $('composer').onsubmit = async (e) => {
   e.preventDefault();
   tap();
   const ready = tray.filter((x) => x.path);
-  const typed = text.value.trim();
+  const typed = typedText().trim();
   // While it is working the button is a stop, unless you have something to say
   // — then it queues rather than interrupting.
   if (busy && !typed && !ready.length) {
@@ -1376,8 +1418,7 @@ $('composer').onsubmit = async (e) => {
   const body = [typed, paths.length
     ? 'Ekli dosya' + (paths.length > 1 ? 'lar' : '') + ': ' + paths.join(', ')
     : ''].filter(Boolean).join('\n\n');
-  text.value = '';
-  text.style.height = 'auto';
+  clearText();
   tray = [];
   paintTray();
   if (busy) {
@@ -1484,12 +1525,24 @@ function fitViewport() {
   // page scroll it had just done — took the composer out from above the
   // keyboard. All this does now is notice, so the insets can stand down and
   // the view can stay at the bottom.
-  const open = Math.max(0, window.innerHeight - vv.height) > 80;
-  if (open !== root.classList.contains('kb')) {
-    root.classList.toggle('kb', open);
-    requestAnimationFrame(() => toBottom());
-  }
+  setKeyboard(Math.max(0, window.innerHeight - vv.height) > 80);
 }
+
+// Two signals, because neither is reliable alone: the visual viewport shrinks
+// on some platforms and iOS scrolls the page instead, but wherever the
+// keyboard came from, the field it came for has focus.
+let vvSaysOpen = false;
+function setKeyboard(open) {
+  vvSaysOpen = open;
+  const on = open || document.activeElement === text;
+  const root = document.documentElement;
+  if (on === root.classList.contains('kb')) return;
+  root.classList.toggle('kb', on);
+  requestAnimationFrame(() => toBottom());
+}
+
+text.addEventListener('focus', () => setKeyboard(vvSaysOpen));
+text.addEventListener('blur', () => setKeyboard(vvSaysOpen));
 
 if (window.visualViewport) {
   window.visualViewport.addEventListener('resize', fitViewport);
@@ -1505,8 +1558,11 @@ document.addEventListener('visibilitychange', () => {
   if (!session) return;
   if (document.hidden) {
     if (stream) { stream.close(); stream = null; }
-  } else if (!stream) {
-    listen();
+  } else {
+    if (!stream) listen();
+    // Coming back is as good a moment as any to check the subscription is
+    // still the one the server has.
+    keepPush();
   }
 });
 

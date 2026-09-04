@@ -613,15 +613,22 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
   border-radius: 10px; background: var(--key);
 }
 
+/* Not a textarea. iOS puts an accessory bar over the keyboard for form
+   fields — previous, next, and a tick that does nothing here — and there is no
+   way to turn it off. A contenteditable region gets no such bar, so the
+   composer sits straight on the keys. */
 #text {
-  display: block; width: 100%; resize: none; max-height: 132px;
+  display: block; width: 100%; max-height: 132px; overflow-y: auto;
   padding: 9px 12px 4px; border: none; background: none; color: var(--ink);
-  box-shadow: none;
-  font-family: inherit;
+  box-shadow: none; font-family: inherit;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  -webkit-user-modify: read-write-plaintext-only;
   /* Not 15px: anything under 16 makes iOS zoom the page on focus. */
   font-size: 16px;
+  line-height: 1.4; min-height: 26px;
 }
 #text:focus { outline: none; }
+#text:empty::before { content: attr(data-placeholder); color: var(--dim); }
 #send {
   position: relative; overflow: hidden;
   width: 44px; height: 44px; border: none; border-radius: 50%;
@@ -783,7 +790,9 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
     <div id="dock">
       <div id="tray"></div>
       <div id="queued"></div>
-      <textarea id="text" rows="1" placeholder="Mesaj yaz…" enterkeyhint="send"></textarea>
+      <div id="text" contenteditable="true" role="textbox" enterkeyhint="send"
+           aria-multiline="true" aria-label="Mesaj"
+           data-placeholder="Mesaj yaz…"></div>
       <div id="controls">
         <button class="icon" id="attach" type="button" title="Ekle">＋</button>
         <button id="modelchip" type="button" title="Model">…</button>
@@ -798,6 +807,6 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 <div id="veil"><div id="sheet"></div></div>
 <div id="popveil"><div id="pop"></div></div>
 
-<script src="app.js?v=38"></script>
+<script src="app.js?v=39"></script>
 </body>
 </html>
