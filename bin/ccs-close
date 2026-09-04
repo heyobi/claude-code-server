@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Close a session for good.
+#
+#   ccs-close <name>     stop it and forget it
+#   ccs-close --idle     close every idle session (keeps the pool's newest one)
+#
+# Archiving a chat in the Claude apps does not stop anything on this machine:
+# the tmux session and its claude process keep running, and the pool brings the
+# conversation back after a reboot. This is what actually closes it.
+#
+# The transcript stays on disk either way. `ccs-resume` reopens it later.
+set -uo pipefail
+
+CCS_BIN="$(dirname "$(readlink -f "$0")")"
+# shellcheck source=ccs-common.sh
+. "$CCS_BIN/ccs-common.sh"
+
+close_one() {
+  local name="$1" transcript messages
+  if ! tmux has-session -t "$name" 2>/dev/null && [ ! -f "$CCS_POOLDIR/${name}.uuid" ]; then
+    echo "No session or record named '$name'." >&2
+    return 1
+  fi
+
+  transcript=$(ccs_transcript "$name" 2>/dev/null) || transcript=""
+  messages=0
+  [ -n "$transcript" ] && messages=$(ccs_usercount "$transcript")
+
+  tmux kill-session -t "$name" 2>/dev/null && echo "Stopped '$name'."
+  # Forgetting the record is the important half: without it the next reboot
+  # would resume this conversation again.
+  rm -f "$CCS_POOLDIR/${name}.uuid"
+  rm -f "$CCS_MARKDIR/${name}"
+  ccs_log "closed: $name"
+
+  if [ "$messages" -gt 0 ] && [ -n "$transcript" ]; then
+    echo "Kept $messages messages on disk. Reopen with:"
+    echo "  ccs-resume $(basename "$transcript" .jsonl)"
+  fi
+}
+
+case "${1:-}" in
+  "")
+    echo "usage: ccs-close <name>    close one session" >&2
+    echo "       ccs-close --idle    close idle sessions, keeping one" >&2
+    echo >&2
+    "$CCS_BIN/ccs-list" >&2
+    exit 1
+    ;;
+  --idle)
+    kept=""
+    for session in $(ccs_sessions); do
+      transcript=$(ccs_transcript "$session" 2>/dev/null) || continue
+      [ "$(ccs_usercount "$transcript")" -gt 0 ] && continue
+      if [ -z "$kept" ]; then
+        kept="$session"
+        continue                       # leave one ready for the pool
+      fi
+      close_one "$session"
+    done
+    [ -n "$kept" ] && echo "Kept '$kept' as the idle session."
+    ;;
+  *)
+    close_one "$1"
+    ;;
+esac

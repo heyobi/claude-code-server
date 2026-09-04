@@ -37,7 +37,8 @@ chmod +x "$DEST"/bin/*
 ln -sf "$DEST/bin/ccs-new"    "$BINDIR/ccs-new"
 ln -sf "$DEST/bin/ccs-list"   "$BINDIR/ccs-list"
 ln -sf "$DEST/bin/ccs-resume" "$BINDIR/ccs-resume"
-say "Linked ccs-new, ccs-list and ccs-resume into $BINDIR"
+ln -sf "$DEST/bin/ccs-close"  "$BINDIR/ccs-close"
+say "Linked ccs-new, ccs-list, ccs-resume and ccs-close into $BINDIR"
 
 case ":$PATH:" in
   *":$BINDIR:"*) ;;
@@ -99,5 +100,6 @@ After that the pool starts sessions unattended.
   ccs-list            show sessions and where to open them
   ccs-new <topic>     start a named session
   ccs-resume          list and reopen earlier conversations
+  ccs-close <name>    stop a session for good
 
 EOF

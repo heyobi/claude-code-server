@@ -86,8 +86,19 @@ ccs-list                    # sessions, state, and where to open each one
 ccs-new database migration  # a session named myhost-database-migration
 ccs-resume                  # list earlier conversations
 ccs-resume 8183e458         # bring one back, an id prefix is enough
+ccs-close myhost-02-fix     # stop a session for good
 tmux attach -t myhost-01    # attach locally
 ```
+
+### Archiving a chat does not close it
+
+Archiving in the Claude apps only tidies your list. On this machine the tmux
+session and its claude process keep running — a few hundred MB each — and after
+a reboot the pool resumes the conversation, so it reappears.
+
+`ccs-close <name>` is what actually ends one: it stops the session and forgets
+the record, so the restore pass leaves it alone. The transcript stays on disk,
+and `ccs-resume` can reopen it whenever you want.
 
 Detach with `Ctrl+B` then `D`. **Do not type `exit`** — that closes the window,
 and closing the last window ends the session. Closing the terminal window is
