@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v41';
+const BUILD = 'v42';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -218,6 +218,9 @@ function paintModel() {
 }
 
 function setStatus(ready, profile) {
+  // Nothing is being held while an archived conversation is on screen, so the
+  // poll that keeps the live status fresh must not paint over what it says.
+  if (reading) return;
   const dot = document.querySelector('#sub .dot');
   dot.className = 'dot' + (ready === null ? ' off' : ready ? '' : ' busy');
   $('statusText').textContent =
@@ -308,6 +311,8 @@ async function refresh() {
 }
 
 async function openSession(name) {
+  reading = null;
+  document.body.classList.remove('reading');
   session = name;
   store.session = name;
   seen = new Set();
@@ -494,7 +499,7 @@ function label(box, words) {
 // Claude Code reopens it under the id it already had, so it comes back as
 // itself rather than as a new session that happens to remember things.
 function pastRow(list, row) {
-  const el = button(list, '', null, () => reopen(row));
+  const el = button(list, '', null, () => readPast(row));
   el.classList.add('chatrow');
   el.innerHTML =
     '<span class="grow">' +
@@ -502,8 +507,51 @@ function pastRow(list, row) {
         '<span class="cname">' + esc(row.topic.slice(0, 46)) + '</span>' +
         '<span class="cwhen">' + esc(whenish(row.at)) + '</span>' +
       '</span>' +
-      '<span class="cprev">' + esc(row.uuid.slice(0, 8)) + ' · kapalı</span>' +
-    '</span><span class="ctick">↩</span>';
+      '<span class="cprev">' + esc(row.uuid.slice(0, 8)) + ' · ' +
+        (row.here ? 'kapalı' : esc(row.dir || 'başka klasör')) + '</span>' +
+    '</span><span class="ctick">' + (row.here ? '↩' : '👁') + '</span>';
+}
+
+// Reading is not resuming. A closed conversation is a file on the disk, and
+// opening a file costs no process, no backend and no subscription — which is
+// most of the reason for keeping them. Bringing it back is a second step, and
+// only offered for conversations held in this workspace: a resume starts a
+// session, a session starts in a working directory, and this server has one.
+let reading = null;
+
+async function readPast(row) {
+  closeSheet();
+  if (stream) { stream.close(); stream = null; }
+  reading = row;
+  document.body.classList.add('reading');
+  $('name').textContent = row.topic.slice(0, 40);
+  document.querySelector('#sub .dot').className = 'dot off';
+  $('statusText').textContent = 'arşivden okunuyor';
+  const el = $('stream');
+  el.innerHTML = '';
+  let data;
+  try {
+    data = await api('/api/past/turns?uuid=' + encodeURIComponent(row.uuid));
+  } catch (e) {
+    note('Konuşma okunamadı.');
+    return;
+  }
+  const head = document.createElement('div');
+  head.className = 'archived';
+  head.innerHTML = '<span>' + (data.here
+    ? 'Kapatılmış konuşma · okunuyor'
+    : 'Başka bir klasörün konuşması · ' + esc(data.dir || '?')) + '</span>';
+  if (data.here) {
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.textContent = '↩ Geri getir';
+    back.onclick = () => reopen(row);
+    head.appendChild(back);
+  }
+  el.appendChild(head);
+  data.turns.forEach(addTurn);
+  if (!data.turns.length) note('Bu konuşmada gösterilecek bir şey yok.');
+  toBottom(true);
 }
 
 async function reopen(row) {

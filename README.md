@@ -105,6 +105,35 @@ a reboot the pool resumes the conversation, so it reappears.
 the record, so the restore pass leaves it alone. The transcript stays on disk,
 and `ccs-resume` can reopen it whenever you want.
 
+### Reading an old conversation costs nothing
+
+A closed conversation is a file. Opening one needs no process, no gateway and
+no subscription, so tapping an archived conversation reads it rather than
+resuming it — the whole transcript on screen, the composer greyed out because
+there is nothing to send to, and bringing it back a second, deliberate step.
+
+The archive holds every conversation on the machine, not only this workspace's.
+Claude Code files a transcript under the folder it was held in, so one machine
+can carry several folders' worth, and hiding the others would make it not an
+archive. The folder is read off the transcript rather than decoded from the
+directory name: that name is the path with the slashes turned into dashes,
+which cannot be reversed once a folder has a dash of its own. Conversations
+from another folder can be read but not resumed here — a resume starts a
+session, a session starts in a working directory, and this server has one.
+
+### An archive that outlives the subscription
+
+The point of all of this is what happens when the Claude subscription is not
+there. Tested end to end: a conversation answered only by `claude-opus-5`, told
+to remember the number 123, closed. Resumed, moved onto the Antigravity
+profile, asked what the hint was — `gemini-3.7-flash-high` answered 123.
+
+It works because of what the bridge sends on the first turn of a conversation
+it has not seen: `whole(payload)`, the entire transcript flattened, rather than
+just the newest message. After that the executor keeps the conversation on its
+side and only the new message goes. So history crosses backends, and a
+transcript written under one is readable and continuable under another.
+
 The web app has an archive anyway, because a list you cannot tidy stops being
 readable — and it holds everything, not just what is running. Closed
 conversations are still on the disk, so the archive lists them too, newest

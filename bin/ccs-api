@@ -17,6 +17,7 @@ Commands never reach a model, same as the bot: they run ccs-* and tmux.
 """
 
 import argparse
+import glob
 import json
 import mimetypes
 import os
@@ -339,44 +340,85 @@ BOILERPLATE = (
 )
 
 
-def past_conversations():
-    """Conversations that are on the disk but not in tmux.
+def transcript_cwd(path):
+    """The folder a conversation was held in, read off the transcript.
 
-    Closing a session leaves the transcript exactly where it was, and
-    ccs-resume can bring any of them back under the name it had. An archive
-    that only holds what is still running is not the archive; this is.
+    The directory name Claude Code stores it under is the path with the
+    slashes replaced by dashes, which cannot be decoded again — a folder with
+    a dash in its name is indistinguishable from a slash. The entries carry
+    the real path, so it is read rather than guessed.
+    """
+    try:
+        with open(path, "rb") as handle:
+            for _ in range(20):
+                line = handle.readline()
+                if not line:
+                    break
+                try:
+                    entry = json.loads(line.decode("utf-8", "ignore"))
+                except ValueError:
+                    continue
+                if entry.get("cwd"):
+                    return entry["cwd"]
+    except OSError:
+        pass
+    return ""
+
+
+def past_conversations():
+    """Every conversation on the disk that is not currently open.
+
+    Not just this workspace's. Claude Code files a transcript under the folder
+    it was held in, so the same machine can carry conversations from several,
+    and an archive that hides the others is not the archive. They can all be
+    read; only the ones from this workspace can be resumed here, because a
+    resume is a session started in a working directory and this server has one.
     """
     live = set()
     for name in ccs_sessions():
         uid = session_uuid(name)
         if uid:
             live.add(uid)
-    try:
-        names = os.listdir(PROJDIR)
-    except OSError:
-        return []
     files = []
-    for entry in names:
-        if not entry.endswith(".jsonl"):
+    for folder in sorted(glob.glob(os.path.join(os.path.dirname(PROJDIR), "*"))):
+        if not os.path.isdir(folder):
             continue
-        if entry[:-6] in live:
-            continue
-        full = os.path.join(PROJDIR, entry)
+        here = os.path.realpath(folder) == os.path.realpath(PROJDIR)
         try:
-            files.append((os.path.getmtime(full), entry[:-6], full))
+            names = os.listdir(folder)
         except OSError:
             continue
+        for entry in names:
+            if not entry.endswith(".jsonl") or entry[:-6] in live:
+                continue
+            full = os.path.join(folder, entry)
+            try:
+                files.append((os.path.getmtime(full), entry[:-6], full, here))
+            except OSError:
+                continue
     files.sort(reverse=True)
     rows = []
-    for at, uuid, full in files[:150]:
+    for at, uuid, full, here in files[:200]:
         topic = first_words(full)
         if not topic:
             continue                     # opened, never used
         rows.append({
             "uuid": uuid, "topic": topic, "at": int(at),
-            "size": os.path.getsize(full),
+            "size": os.path.getsize(full), "here": here,
+            "dir": transcript_cwd(full),
         })
     return rows
+
+
+def past_path(uuid):
+    """Where a past conversation's transcript is, in any folder."""
+    if not uuid or not uuid.replace("-", "").isalnum():
+        return None
+    for folder in glob.glob(os.path.join(os.path.dirname(PROJDIR), "*")):
+        full = os.path.join(folder, uuid + ".jsonl")
+        if os.path.isfile(full):
+            return full
+    return None
 
 def short_name(name):
     """The conversation's name without the machine's on the front of it."""
@@ -730,6 +772,20 @@ class Handler(BaseHTTPRequestHandler):
             return self.history(query)
         if path == "/api/events":
             return self.events(query)
+        if path == "/api/past/turns":
+            # Read without starting anything. A closed conversation is a file,
+            # and reading a file needs no backend, no subscription and no
+            # process — which is the whole point of keeping them.
+            full = past_path((query.get("uuid") or [""])[0])
+            if not full:
+                return self.reply(404, {"error": "no such conversation"})
+            turns, _ = turns_from(full, 0)
+            return self.reply(200, {
+                "turns": turns[-HISTORY_MAX:],
+                "dir": transcript_cwd(full),
+                "here": os.path.dirname(os.path.realpath(full))
+                        == os.path.realpath(PROJDIR),
+            })
         if path == "/api/past":
             return self.reply(200, {"entries": cached("past", 120,
                                                       past_conversations)})
@@ -980,7 +1036,11 @@ class Handler(BaseHTTPRequestHandler):
             if not uuid or not uuid.replace("-", "").isalnum():
                 return self.reply(400, {"error": "bad id"})
             if not os.path.exists(os.path.join(PROJDIR, uuid + ".jsonl")):
-                return self.reply(404, {"error": "no such conversation"})
+                # Resuming means starting a session, and a session starts in
+                # this server's working directory. A conversation held
+                # somewhere else can be read, but bringing it back here would
+                # file it under a folder it was never in.
+                return self.reply(404, {"error": "not this workspace"})
             before = set(ccs_sessions())
             ccs("ccs-resume", uuid)
             _CACHE.pop("sessions", None)
