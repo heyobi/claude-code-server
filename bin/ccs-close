@@ -42,10 +42,33 @@ close_one() {
 case "${1:-}" in
   "")
     echo "usage: ccs-close <name>    close one session" >&2
+    echo "       ccs-close --self    close the session this runs in" >&2
     echo "       ccs-close --idle    close idle sessions, keeping one" >&2
     echo >&2
     "$CCS_BIN/ccs-list" >&2
     exit 1
+    ;;
+  --self)
+    # Run from inside a session -- "close yourself" from the phone, no SSH.
+    # The record goes now; the session is killed a few seconds later so the
+    # reply still reaches you before the process dies with it.
+    if [ -z "${TMUX:-}" ]; then
+      echo "--self only works from inside a session. Pass a name instead." >&2
+      exit 1
+    fi
+    self=$(tmux display-message -p '#{session_name}' 2>/dev/null)
+    if [ -z "$self" ]; then
+      echo "Could not work out which session this is." >&2
+      exit 1
+    fi
+    transcript=$(ccs_transcript "$self" 2>/dev/null) || transcript=""
+    rm -f "$CCS_POOLDIR/${self}.uuid" "$CCS_MARKDIR/${self}"
+    ccs_log "closing self: $self"
+    setsid nohup sh -c "sleep 5; tmux kill-session -t '$self'" >/dev/null 2>&1 &
+    echo "Closing '$self' in a few seconds. It will not come back after a reboot."
+    if [ -n "$transcript" ]; then
+      echo "Reopen later with: ccs-resume $(basename "$transcript" .jsonl)"
+    fi
     ;;
   --idle)
     kept=""

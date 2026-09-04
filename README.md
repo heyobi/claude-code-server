@@ -100,6 +100,10 @@ a reboot the pool resumes the conversation, so it reappears.
 the record, so the restore pass leaves it alone. The transcript stays on disk,
 and `ccs-resume` can reopen it whenever you want.
 
+You do not need a shell for this. The installer drops a `CLAUDE.md` in the
+workspace telling the assistant to run `ccs-close --self` when you ask it to
+close, so from your phone you can just say "close this session" and it does.
+
 Detach with `Ctrl+B` then `D`. **Do not type `exit`** — that closes the window,
 and closing the last window ends the session. Closing the terminal window is
 safe; typing `exit` is not.

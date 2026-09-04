@@ -73,6 +73,16 @@ if [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" != "yes" ]; t
   sudo loginctl enable-linger "$USER"
 fi
 
+# ------------------------------------------------------- workspace notes ----
+# Tells the assistant in each session how to close itself, so the user can say
+# "close this" from their phone instead of opening an SSH connection.
+if [ ! -f "$CCS_WORKDIR/CLAUDE.md" ]; then
+  cp "$SRC/workspace-CLAUDE.md" "$CCS_WORKDIR/CLAUDE.md"
+  say "Wrote session notes to $CCS_WORKDIR/CLAUDE.md"
+else
+  warn "$CCS_WORKDIR/CLAUDE.md exists; not overwriting (see workspace-CLAUDE.md)"
+fi
+
 # ------------------------------------------------------------------ tmux ----
 if ! grep -q 'claude-code-server' "$HOME/.tmux.conf" 2>/dev/null; then
   cat "$SRC/tmux.conf.snippet" >> "$HOME/.tmux.conf"
