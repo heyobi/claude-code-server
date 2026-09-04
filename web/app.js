@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v32';
+const BUILD = 'v34';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -381,6 +381,11 @@ function whenish(at) {
 
 async function sessionSheet() {
   await refresh();
+  // Only when you ask for it: this one reads every transcript on the disk.
+  let gone = [];
+  if (listFilter === 'archived') {
+    try { gone = (await api('/api/past')).entries || []; } catch {}
+  }
   // Newest first. A list of sessions is a list of conversations, and the one
   // you want is almost always the one you were just in.
   const pins = pinned();
@@ -396,17 +401,23 @@ async function sessionSheet() {
     filters(box, [
       ['live', 'Tümü', here.length],
       ['busy', 'Çalışıyor', busy.length],
-      ['archived', '🗄 Arşiv', away.length],
+      ['archived', '🗄 Arşiv', away.length + (known.past || 0)],
     ]);
     if (listFilter === 'archived') {
       const note = document.createElement('p');
       note.className = 'note';
-      note.textContent = 'Arşiv listeyi toparlar, oturumu kapatmaz — ' +
-                         'hepsi çalışmaya devam ediyor.';
+      note.textContent = 'Arşivlenenler çalışmaya devam eder. ' +
+                         'Kapatılmışlar diskte durur; dokununca geri gelirler.';
       box.appendChild(note);
-      if (!away.length) button(box, 'Arşiv boş', null, () => {});
-      const list = away.length ? group(box) : box;
-      away.forEach((s) => chatRow(list, s, false));
+      if (away.length) {
+        label(box, 'Arşivde, hâlâ çalışıyor');
+        const list = group(box);
+        away.forEach((s) => chatRow(list, s, false));
+      }
+      label(box, 'Kapatılmış konuşmalar');
+      if (!gone.length) button(box, 'Yok', null, () => {});
+      const old = gone.length ? group(box) : box;
+      gone.forEach((row) => pastRow(old, row));
       return;
     }
     if (listFilter === 'busy') {
@@ -448,6 +459,35 @@ function label(box, words) {
   el.className = 'sublabel';
   el.textContent = words;
   box.appendChild(el);
+}
+
+// A conversation that was closed. The transcript never went anywhere, and
+// Claude Code reopens it under the id it already had, so it comes back as
+// itself rather than as a new session that happens to remember things.
+function pastRow(list, row) {
+  const el = button(list, '', null, () => reopen(row));
+  el.classList.add('chatrow');
+  el.innerHTML =
+    '<span class="grow">' +
+      '<span class="ctop">' +
+        '<span class="cname">' + esc(row.topic.slice(0, 46)) + '</span>' +
+        '<span class="cwhen">' + esc(whenish(row.at)) + '</span>' +
+      '</span>' +
+      '<span class="cprev">' + esc(row.uuid.slice(0, 8)) + ' · kapalı</span>' +
+    '</span><span class="ctick">↩</span>';
+}
+
+async function reopen(row) {
+  closeSheet();
+  $('statusText').textContent = 'geri getiriliyor…';
+  try {
+    const r = await post('/api/session', { action: 'resume', uuid: row.uuid });
+    if (r.session) { openSession(r.session); return; }
+  } catch (e) {
+    $('statusText').textContent = 'geri getirilemedi';
+    return;
+  }
+  sessionSheet();
 }
 
 async function setArchived(name, state) {
@@ -545,19 +585,6 @@ function menuSheet() {
   $('popveil').classList.add('open');
 }
 
-// Asking the computed style for env(safe-area-inset-bottom) gives you the
-// expression back on some browsers. A one-pixel probe gives you the number.
-function inset() {
-  const probe = document.createElement('div');
-  probe.style.cssText =
-    'position:fixed;bottom:0;left:0;width:1px;visibility:hidden;' +
-    'height:env(safe-area-inset-bottom)';
-  document.body.appendChild(probe);
-  const h = probe.offsetHeight;
-  probe.remove();
-  return h + 'px';
-}
-
 function measurements() {
   const vv = window.visualViewport;
   const dock = $('dock').getBoundingClientRect();
@@ -569,7 +596,8 @@ function measurements() {
     'görünür ' + (vv ? Math.round(vv.height) + '+' + Math.round(vv.offsetTop) : '—'),
     'kutu ' + Math.round(dock.bottom),
     'pay ' + foot,
-    'alt güvenli ' + inset(),
+    'alt güvenli ' + probe('env(safe-area-inset-bottom)') + 'px',
+    'eksik ' + slackBelow() + 'px',
     home ? 'uygulama' : 'tarayıcı',
   ].join(' · ');
 }
@@ -1382,6 +1410,44 @@ $('stream').addEventListener('click', (e) => {
 });
 
 /* ------------------------------------------------------------- viewport */
+
+// How far the window falls short of the screen it is drawn on.
+//
+// An installed iOS app with a translucent status bar gets drawn from the very
+// top of the display, but its window is sized as though it started below the
+// status bar — so window.innerHeight comes up exactly one inset short and
+// everything fixed to the bottom of it floats that far above the glass. The
+// phone's own numbers said it plainly: screen 874, window 812, inset 62.
+//
+// The guard is the top inset: it is only non-zero when the page is being drawn
+// under the status bar, which is the only case where the missing strip is
+// really ours to paint into.
+function slackBelow() {
+  if (window.navigator.standalone !== true) return 0;
+  if (window.innerHeight <= window.innerWidth) return 0;            // portrait only
+  if (probe('env(safe-area-inset-top)') < 20) return 0;
+  const short = Math.round(window.screen.height - window.innerHeight);
+  return short > 20 && short < 140 ? short : 0;
+}
+
+// A length CSS knows and JavaScript does not, in pixels.
+function probe(expr) {
+  const el = document.createElement('div');
+  el.style.cssText =
+    'position:fixed;bottom:0;left:0;width:1px;visibility:hidden;height:' + expr;
+  document.body.appendChild(el);
+  const h = el.offsetHeight;
+  el.remove();
+  return h;
+}
+
+function fitSlack() {
+  document.documentElement.style.setProperty('--slack', slackBelow() + 'px');
+}
+
+fitSlack();
+window.addEventListener('orientationchange', () => setTimeout(fitSlack, 200));
+
 
 // iOS does not shrink the page for the keyboard. It leaves the layout alone
 // and slides a window over it, which takes anything fixed to the layout with

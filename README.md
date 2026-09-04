@@ -106,7 +106,13 @@ the record, so the restore pass leaves it alone. The transcript stays on disk,
 and `ccs-resume` can reopen it whenever you want.
 
 The web app has an archive anyway, because a list you cannot tidy stops being
-readable — but it says what it is. The session list carries its filters at the
+readable — and it holds everything, not just what is running. Closed
+conversations are still on the disk, so the archive lists them too, newest
+first, titled by the first thing that was asked in them; tapping one runs
+`ccs-resume` and it comes back under the id it already had. Transcripts with no
+user message in them are pool slots rather than conversations, and stay out.
+The scan reads the head of every transcript, so it is cached for two minutes
+rather than run on every poll. The archive says what it is, too. The session list carries its filters at the
 top with their counts — all, working, archived — so the archive is somewhere
 you can see rather than somewhere you have to already know about. The archived
 view states that those conversations are still running, and closing is one tap
@@ -333,7 +339,15 @@ typing.
 
 The model sits in a pill, not as plain text beside the attach button — a label
 next to a control reads as a caption, and nobody taps a caption. The panel rests on the
-floor of the visible area, with no clearance at all, . There is a layout readout in the
+floor of the visible area, with no clearance at all, , which took some finding: on an
+installed iOS app with a translucent status bar the page is drawn from the very
+top of the display but the window is sized as though it began below the status
+bar, so `window.innerHeight` comes up exactly one inset short and everything
+fixed to the bottom of it floats that far above the glass. The phone's own
+numbers settled it — screen 874, window 812, top inset 62. The strip is still
+ours to paint into, so the composer is pushed down into it by the measured
+difference, guarded on the top inset being non-zero, on portrait, and on being
+the installed app. There is a layout readout in the
 menu — screen, window, visual viewport, where the panel's bottom edge actually
 landed, and whether this is the installed app or a browser tab. A gap reported
 from a phone and reproducible nowhere else is a measurement problem, and the

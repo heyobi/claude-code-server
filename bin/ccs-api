@@ -29,7 +29,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from ccs_common import (                      # noqa: E402  (path set above)
-    CFG, HOME, POOLDIR, WORKDIR, _CACHE, cached, ccs, ccs_sessions, next_auto_name,
+    CFG, HOME, POOLDIR, PROJDIR, WORKDIR, _CACHE, cached, ccs, ccs_sessions,
+    next_auto_name,
     last_words, pane_progress, pane_ready, send_to_session, session_profile,
     session_uuid, tmux, transcript_of,
     turns_from,
@@ -293,6 +294,89 @@ def session_model(profile):
     return (CFG.get("CCS_MODEL") or "").strip()
 
 
+def first_words(path, window=16000):
+    """What a conversation was about, from the first thing asked in it.
+
+    The head, not the tail: an archive row wants the subject, and the tail
+    of a long conversation is usually somebody saying thanks. Sessions that
+    were opened and never used have no user message at all, and those are
+    not conversations — they are pool slots, and they stay out of the list."""
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read(window)
+    except OSError:
+        return ""
+    for raw in data.split(b"\n"):
+        if not raw.strip():
+            continue
+        try:
+            entry = json.loads(raw.decode("utf-8", "ignore"))
+        except ValueError:
+            continue
+        if entry.get("type") != "user":
+            continue
+        body = (entry.get("message") or {}).get("content")
+        if isinstance(body, list):
+            body = " ".join(p.get("text", "") for p in body
+                            if isinstance(p, dict) and p.get("type") == "text")
+        text = (body or "").strip()
+        low = text.lower()
+        if not text or any(low.startswith(b) for b in BOILERPLATE):
+            continue
+        return " ".join(text.split())[:90]
+    return ""
+
+
+# A resumed session opens with the client's own nudge, and every resumed
+# session opens with the same one.
+BOILERPLATE = (
+    "continue from where you left off",
+    "caveat: the messages below were generated",
+    "this session is being continued from a previous",
+    "<command-",                     # a slash command, not something anyone said
+    "<local-command",
+)
+
+
+def past_conversations():
+    """Conversations that are on the disk but not in tmux.
+
+    Closing a session leaves the transcript exactly where it was, and
+    ccs-resume can bring any of them back under the name it had. An archive
+    that only holds what is still running is not the archive; this is.
+    """
+    live = set()
+    for name in ccs_sessions():
+        uid = session_uuid(name)
+        if uid:
+            live.add(uid)
+    try:
+        names = os.listdir(PROJDIR)
+    except OSError:
+        return []
+    files = []
+    for entry in names:
+        if not entry.endswith(".jsonl"):
+            continue
+        if entry[:-6] in live:
+            continue
+        full = os.path.join(PROJDIR, entry)
+        try:
+            files.append((os.path.getmtime(full), entry[:-6], full))
+        except OSError:
+            continue
+    files.sort(reverse=True)
+    rows = []
+    for at, uuid, full in files[:150]:
+        topic = first_words(full)
+        if not topic:
+            continue                     # opened, never used
+        rows.append({
+            "uuid": uuid, "topic": topic, "at": int(at),
+            "size": os.path.getsize(full),
+        })
+    return rows
+
 def describe(name):
     """A session, and what it is doing.
 
@@ -322,7 +406,12 @@ def describe(name):
 
 
 def state():
+    # Scanned rather than counted: a transcript with nothing in it is a pool
+    # slot, not a conversation. Two minutes of memory keeps it off the path of
+    # a poll that runs every few seconds.
+    past = cached("past", 120, past_conversations)
     return {
+        "past": len(past),
         "prefix": CFG.get("CCS_PREFIX", ""),
         "app": app_name(),
         "workdir": WORKDIR,
@@ -627,6 +716,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.history(query)
         if path == "/api/events":
             return self.events(query)
+        if path == "/api/past":
+            return self.reply(200, {"entries": cached("past", 120,
+                                                      past_conversations)})
         if path == "/api/files":
             named = (query.get("session") or [""])[0]
             if named:
@@ -857,6 +949,19 @@ class Handler(BaseHTTPRequestHandler):
             tmux("rename-session", "-t", name, fresh)
             _CACHE.pop("sessions", None)
             return self.reply(200, {"ok": True, "session": fresh})
+        if action == "resume":
+            uuid = str(data.get("uuid") or "")
+            if not uuid or not uuid.replace("-", "").isalnum():
+                return self.reply(400, {"error": "bad id"})
+            if not os.path.exists(os.path.join(PROJDIR, uuid + ".jsonl")):
+                return self.reply(404, {"error": "no such conversation"})
+            before = set(ccs_sessions())
+            ccs("ccs-resume", uuid)
+            _CACHE.pop("sessions", None)
+            _CACHE.pop("past", None)
+            fresh = [n for n in ccs_sessions() if n not in before]
+            return self.reply(200, {"ok": True,
+                                    "session": fresh[0] if fresh else None})
         if action in ("archive", "unarchive"):
             # Archiving tidies the list and nothing else. The tmux session and
             # its process keep running, which is why the sheet says so and
@@ -878,6 +983,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(404, {"error": "no such session"})
             ccs("ccs-close", name)
             _CACHE.pop("sessions", None)
+            _CACHE.pop("past", None)      # it just became a past conversation
             return self.reply(200, {"ok": True})
         return self.reply(400, {"error": "unknown action"})
 

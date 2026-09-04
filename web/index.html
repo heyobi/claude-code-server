@@ -99,10 +99,16 @@ body {
   --bar-top: 62px; --bar-bottom: 104px;
   --pad-top: env(safe-area-inset-top);
   --pad-bottom: env(safe-area-inset-bottom);
-  /* The composer rests on the floor of the visible area. Every version of
-     this that kept some of the home indicator's inset read as hovering, and
-     the indicator is drawn over content everywhere else on the system too. */
+  /* The composer rests on the floor. Every version of this that kept some of
+     the home indicator's inset read as hovering, and the indicator is drawn
+     over content everywhere else on the system too. */
   --dock-floor: 0px;
+  /* How far the window falls short of the glass. Measured at runtime and zero
+     everywhere except an installed iOS app with a translucent status bar,
+     where the window is drawn from the top of the screen but sized as though
+     it began below the bar. The canvas really is down there — the page's own
+     background paints it — so the composer is pushed into it. */
+  --slack: 0px;
 }
 /* The keyboard is covering the home indicator, so nothing needs to be held
    clear of it. Same at the top: the shell has already been moved down. */
@@ -211,7 +217,7 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
   /* Narrower gutters: the text was being squeezed into the middle of the
      screen for no reason. */
   padding: calc(var(--pad-top) + var(--bar-top)) 10px
-           calc(var(--dock-floor) + var(--bar-bottom));
+           calc(var(--dock-floor) + var(--bar-bottom) - var(--slack));
 }
 /* What you said is a message and sits in one. What the model says is the page
    itself — an answer arriving in a box reads as finished, and it is being
@@ -491,7 +497,7 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 #jump {
   position: fixed; z-index: 4; left: 50%;
   /* Clear of the composer's fade, or it looks like part of it. */
-  bottom: calc(var(--dock-floor) + var(--bar-bottom) + 6px);
+  bottom: calc(var(--dock-floor) + var(--bar-bottom) + 6px - var(--slack));
   width: 40px; height: 40px; font-size: 18px;
   background: var(--glass);
   opacity: 0; pointer-events: none;
@@ -506,7 +512,7 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
    is one, the home indicator when there is not. The fade under it is the
    header's, upside down; a drawn line there cut the conversation in two. */
 #composer {
-  position: fixed; bottom: 0; left: 0; right: 0; z-index: 5;
+  position: fixed; bottom: calc(0px - var(--slack)); left: 0; right: 0; z-index: 5;
   display: block;
   padding: 8px 10px var(--dock-floor);
 }
@@ -786,6 +792,6 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 <div id="veil"><div id="sheet"></div></div>
 <div id="popveil"><div id="pop"></div></div>
 
-<script src="app.js?v=32"></script>
+<script src="app.js?v=34"></script>
 </body>
 </html>
