@@ -45,11 +45,29 @@ export PATH="$HOME/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 CCS_BINDIR="${CCS_BINDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 CCS_STATE="$HOME/.claude/claude-code-server"
+CCS_RESERVED="$CCS_STATE/reserved"
 CCS_POOLDIR="$CCS_STATE/sessions"
 CCS_MARKDIR="$CCS_STATE/renamed"
 CCS_LOG="$CCS_STATE/pool.log"
 CCS_PROFILES="${CCS_PROFILES:-$HOME/.config/claude-code-server/profiles}"
-mkdir -p "$CCS_POOLDIR" "$CCS_MARKDIR" "$CCS_PROFILES"
+mkdir -p "$CCS_POOLDIR" "$CCS_MARKDIR" "$CCS_PROFILES" "$CCS_RESERVED"
+
+# A session being relaunched is absent from tmux for a second or two. Without
+# a reservation the pool sees a free name and starts a brand new session on top
+# of it: the conversation you were having is then a dead file on disk, and the
+# thing answering you has no history. Reservations go stale after five minutes
+# so a crashed relaunch cannot block a name forever.
+ccs_prune_reservations() {
+  find "$CCS_RESERVED" -maxdepth 1 -type f -mmin +5 -delete 2>/dev/null || true
+}
+
+ccs_reserve()  { touch "$CCS_RESERVED/$1"; }
+ccs_release()  { rm -f "$CCS_RESERVED/$1"; }
+ccs_reserved() { ccs_prune_reservations; [ -f "$CCS_RESERVED/$1" ]; }
+ccs_any_reserved() {
+  ccs_prune_reservations
+  [ -n "$(ls -A "$CCS_RESERVED" 2>/dev/null)" ]
+}
 
 # Which backend profile a session runs under. "-" means Claude Code's own login.
 ccs_profile_of() {
@@ -79,11 +97,20 @@ ccs_adddirs() {
 # tmux wraps long lines and you will silently capture a truncated id.
 ccs_start() {
   local name="$1" channel="${2:-}" uuid chan=""
+  if tmux has-session -t "$name" 2>/dev/null; then
+    ccs_log "refusing to start $name: that name is already running"
+    return 1
+  fi
   uuid=$(cat /proc/sys/kernel/random/uuid)
   [ -n "$channel" ] && chan=" --channels $channel"
   # shellcheck disable=SC2086
-  tmux new-session -d -s "$name" -x "$CCS_PANE_WIDTH" -y "$CCS_PANE_HEIGHT" -c "$CCS_WORKDIR" \
-    "$CCS_BINDIR/ccs-launch $(ccs_profile_of "$name") --session-id $uuid --remote-control $name$chan$(ccs_extra_flags)$(ccs_adddirs)"
+  if ! tmux new-session -d -s "$name" -x "$CCS_PANE_WIDTH" -y "$CCS_PANE_HEIGHT" -c "$CCS_WORKDIR" \
+    "$CCS_BINDIR/ccs-launch $(ccs_profile_of "$name") --session-id $uuid --remote-control $name$chan$(ccs_extra_flags)$(ccs_adddirs)"; then
+    ccs_log "failed to start $name"
+    return 1
+  fi
+  # Only now, because a record for a session that did not start points every
+  # reader at the wrong transcript.
   printf '%s\n' "$uuid" > "$CCS_POOLDIR/${name}.uuid"
   ccs_log "started: $name (session-id $uuid)${channel:+ [channel]}"
 }
@@ -99,10 +126,17 @@ ccs_channel_name() {
 # already had: an archived conversation in the apps becomes live again.
 ccs_resume() {
   local name="$1" uuid="$2" channel="${3:-}" chan=""
+  if tmux has-session -t "$name" 2>/dev/null; then
+    ccs_log "refusing to resume $name: that name is already running"
+    return 1
+  fi
   [ -n "$channel" ] && chan=" --channels $channel"
   # shellcheck disable=SC2086
-  tmux new-session -d -s "$name" -x "$CCS_PANE_WIDTH" -y "$CCS_PANE_HEIGHT" -c "$CCS_WORKDIR" \
-    "$CCS_BINDIR/ccs-launch $(ccs_profile_of "$name") --resume $uuid --remote-control $name$chan$(ccs_extra_flags)$(ccs_adddirs)"
+  if ! tmux new-session -d -s "$name" -x "$CCS_PANE_WIDTH" -y "$CCS_PANE_HEIGHT" -c "$CCS_WORKDIR" \
+    "$CCS_BINDIR/ccs-launch $(ccs_profile_of "$name") --resume $uuid --remote-control $name$chan$(ccs_extra_flags)$(ccs_adddirs)"; then
+    ccs_log "failed to resume $name"
+    return 1
+  fi
   printf '%s\n' "$uuid" > "$CCS_POOLDIR/${name}.uuid"
   ccs_log "resumed: $name ($uuid)"
 }

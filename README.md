@@ -304,6 +304,32 @@ is called `host-03` again — and it inherits a profile file nobody remembers
 writing. You ask for Claude and quietly get whatever the last tenant used.
 Rename and close now move and delete the whole record.
 
+### The pool will move into a name you are still using
+
+Switching backends kills a session and brings it back a few seconds later.
+The pool ticks on a timer, and if it ticks inside that window it sees a free
+name and starts a fresh session on it. `ccs_resume` then ran `tmux new-session`
+against a name that already existed, which fails — and wrote the session record
+anyway.
+
+Nothing errors. You get a session that answers you with no memory of the
+conversation you were just having, while the record points at a transcript that
+stopped growing, so anything reading it goes quiet. It took a pool log with
+`started` and `resumed` one second apart to see it:
+
+```
+13:39:12 profile: host-01 -> gemini
+13:39:17 started: host-01 (session-id ef25eab0…)   <- the pool
+13:39:18 resumed: host-01 (e4d4b6e1…)              <- the relaunch, too late
+```
+
+A relaunch now reserves the name before anything is killed and releases it when
+the session is back. The pool skips reserved names and does not add a spare
+while one is outstanding; reservations expire after five minutes so a crashed
+relaunch cannot block a name forever. Both launchers refuse to start on a name
+that is already running, and neither writes a record unless tmux actually
+started something.
+
 ### A failed send is not a send that did not happen
 
 `sendMessage` was retried without markup whenever the call came back not-ok,

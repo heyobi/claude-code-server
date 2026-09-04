@@ -78,12 +78,16 @@ ccs_log "profile: $session -> $profile"
 
 # Relaunching kills the process this may be running inside, so do it detached
 # and give the current turn a moment to finish reporting.
+# Claim the name before anything is killed, or the pool fills the gap.
+ccs_reserve "$session"
+
 nohup setsid bash -c "
   sleep 4
   tmux kill-session -t '$session' 2>/dev/null
   sleep 2
   . '$CCS_BIN/ccs-common.sh'
   ccs_resume '$session' '$uuid' '$channel'
+  ccs_release '$session'
 " >/dev/null 2>&1 &
 
 if [ "$profile" = "-" ]; then

@@ -143,11 +143,19 @@ if [ "$count" -ge "$CCS_MAX_SESSIONS" ]; then
   exit 0
 fi
 
+# Something is mid relaunch and will be back in a moment. Adding a spare now
+# only churns processes, and the name it would pick may be the one coming back.
+if ccs_any_reserved; then
+  ccs_log "a session is relaunching, leaving the spare for the next tick"
+  exit 0
+fi
+
 n=1
 while :; do
   candidate=$(printf '%s-%02d' "$CCS_PREFIX" "$n")
   if ! tmux list-sessions -F '#{session_name}' 2>/dev/null \
-       | grep -q "^${candidate}\$\|^${candidate}-"; then
+       | grep -q "^${candidate}\$\|^${candidate}-" \
+     && ! ccs_reserved "$candidate"; then
     break
   fi
   n=$((n + 1))
