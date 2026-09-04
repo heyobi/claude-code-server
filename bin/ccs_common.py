@@ -195,6 +195,43 @@ def read_from(path, offset):
     return items, offset
 
 
+def last_words(path, window=48000):
+    """The most recent thing said, and when.
+
+    Reads the tail rather than the file: a session that has been going all day
+    has a transcript of megabytes, and a list of six of them is drawn every
+    time someone opens the menu."""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as handle:
+            handle.seek(max(0, size - window))
+            data = handle.read()
+    except OSError:
+        return "", 0
+    best_text, best_at = "", 0
+    for raw in data.split(b"\n"):
+        if not raw.strip():
+            continue
+        try:
+            entry = json.loads(raw.decode("utf-8", "ignore"))
+        except ValueError:
+            continue
+        text = user_text(entry)
+        if text is None:
+            text = assistant_text(entry)
+        if not text:
+            continue
+        best_text = text
+        stamp = entry.get("timestamp") or ""
+        if stamp:
+            try:
+                import datetime
+                best_at = int(datetime.datetime.fromisoformat(
+                    stamp.replace("Z", "+00:00")).timestamp())
+            except ValueError:
+                pass
+    return " ".join(best_text.split())[:120], best_at
+
 def tool_calls(entry):
     """The tool invocations in one assistant entry."""
     if entry.get("type") != "assistant":

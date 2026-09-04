@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v21';
+const BUILD = 'v22';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -326,19 +326,42 @@ function button(parent, label, sub, on, active) {
   b.innerHTML = '<span class="grow">' + label +
                 (sub ? '<small>' + sub + '</small>' : '') + '</span>' +
                 (active ? '<span>✓</span>' : '');
-  b.onclick = on;
+  b.onclick = (e) => { tap(); return on(e); };
   parent.appendChild(b);
   return b;
 }
 
+function whenish(at) {
+  if (!at) return '';
+  const gap = Date.now() / 1000 - at;
+  if (gap < 90) return 'az önce';
+  if (gap < 3600) return Math.round(gap / 60) + ' dk';
+  if (gap < 86400) return Math.round(gap / 3600) + ' sa';
+  if (gap < 7 * 86400) return Math.round(gap / 86400) + ' gün';
+  return new Date(at * 1000).toLocaleDateString();
+}
+
 async function sessionSheet() {
   await refresh();
+  // Newest first. A list of sessions is a list of conversations, and the one
+  // you want is almost always the one you were just in.
+  const rows = [...known.sessions].sort((a, b) => (b.at || 0) - (a.at || 0));
   sheet('Oturumlar', (box) => {
     const list = group(box);
-    known.sessions.forEach((s) => {
-      button(list, s.name, (s.profile === '-' ? 'Claude' : s.profile) +
-             (s.ready ? '' : ' · çalışıyor'),
+    rows.forEach((s) => {
+      const row = button(list, '', null,
         () => { closeSheet(); openSession(s.name); }, s.name === session);
+      row.classList.add('chatrow');
+      row.innerHTML =
+        '<span class="grow">' +
+          '<span class="ctop">' +
+            '<span class="cname">' + esc(s.name) + '</span>' +
+            '<span class="cwhen">' + esc(whenish(s.at)) + '</span>' +
+          '</span>' +
+          '<span class="cprev">' + esc(s.last || 'Henüz konuşmadı') + '</span>' +
+          '<span class="ctag">' + esc(s.profile === '-' ? 'Claude' : s.profile) +
+            (s.ready ? '' : ' · çalışıyor') + '</span>' +
+        '</span>' + (s.name === session ? '<span class="ctick">✓</span>' : '');
     });
   });
 }
@@ -488,6 +511,27 @@ function pickModel(provider) {
     });
     button(box, '◀ Geri', null, () => modelSheet());
   });
+}
+
+/* --------------------------------------------------------------- haptics */
+
+// Safari has never implemented the Vibration API. It does give a switch its
+// own haptic, though, and clicking that switch's label from script borrows it.
+// Apple closed this in iOS 26.5, so on a newer phone the calls simply do
+// nothing — which is the right way for it to fail.
+const buzzer = (() => {
+  const label = document.createElement('label');
+  label.style.cssText = 'position:fixed;left:-9999px;width:1px;height:1px';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.setAttribute('switch', '');
+  label.appendChild(box);
+  document.body.appendChild(label);
+  return label;
+})();
+
+function tap() {
+  try { buzzer.click(); } catch {}
 }
 
 /* ------------------------------------------------------------ attachments */

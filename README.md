@@ -292,6 +292,19 @@ support `url()` in `backdrop-filter`
 which is the browser this is built for — it renders as nothing. Chasing it would
 have looked right on the development machine and wrong on the phone.
 
+### The session list
+
+A session is a conversation, so the list shows what the conversation was about:
+the last thing said, when it was said, and which backend said it, newest first.
+That means reading each transcript, which would be slow done naively — a session
+running all day has megabytes of it — so only the tail is read.
+
+Rows answer a tap with a small haptic where the browser allows one. Safari has
+never implemented the Vibration API, but it does give a switch control its own
+haptic, and clicking that switch's label from script borrows it. Apple closed
+that in iOS 26.5, so on a newer phone the call does nothing, which is the right
+way for a decoration to fail.
+
 ### Tasks
 
 A busy session is a running job, so the app shows them that way: what is

@@ -30,7 +30,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from ccs_common import (                      # noqa: E402  (path set above)
     CFG, HOME, POOLDIR, WORKDIR, _CACHE, cached, ccs, ccs_sessions, next_auto_name,
-    pane_progress, pane_ready, send_to_session, session_profile, tmux, transcript_of,
+    last_words, pane_progress, pane_ready, send_to_session, session_profile, tmux,
+    transcript_of,
     turns_from,
 )
 import ccs_push                              # noqa: E402  (path set above)
@@ -252,10 +253,14 @@ def describe(name):
     inventing a progress bar.
     """
     ready = pane_ready(name)
+    path = transcript_of(name)
+    said, at = last_words(path) if path else ("", 0)
     row = {
         "name": name,
         "profile": session_profile(name),
         "ready": ready,
+        "last": said,
+        "at": at,
     }
     if not ready:
         live = pane_progress(name)
