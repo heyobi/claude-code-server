@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v14';
+const BUILD = 'v18';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -81,8 +81,38 @@ function render(text) {
       return;
     }
     let list = null;
-    const flush = () => { if (list) { out.push('</' + list + '>'); list = null; } };
-    part.split('\n').forEach((line) => {
+    let table = null;
+    const flush = () => {
+      if (list) { out.push('</' + list + '>'); list = null; }
+      if (table) { out.push('</tbody></table></div>'); table = null; }
+    };
+    const lines = part.split('\n');
+    lines.forEach((line, index) => {
+      // A table is a run of pipe rows; the second is the alignment rule and is
+      // not content. Detecting it needs the line after, so it happens here
+      // rather than in the per-line branches below.
+      const cells = line.trim().match(/^\|(.+)\|$/);
+      if (cells) {
+        const parts = cells[1].split('|').map((c) => c.trim());
+        if (/^[\s|:-]+$/.test(line)) return;          // the rule
+        if (!table) {
+          if (list) flush();
+          const next = (lines[index + 1] || '').trim();
+          const isHead = /^\|[\s|:-]+\|$/.test(next);
+          out.push('<div class="tablewrap"><table>');
+          if (isHead) {
+            out.push('<thead><tr>' +
+              parts.map((c) => '<th>' + inline(c) + '</th>').join('') +
+              '</tr></thead>');
+          }
+          out.push('<tbody>');
+          table = true;
+          if (isHead) return;
+        }
+        out.push('<tr>' + parts.map((c) => '<td>' + inline(c) + '</td>').join('') + '</tr>');
+        return;
+      }
+      if (table) flush();
       const head = line.match(/^(#{1,4})\s+(.*)$/);
       const bullet = line.match(/^\s*[-*+]\s+(.*)$/);
       const number = line.match(/^\s*\d+[.)]\s+(.*)$/);
@@ -115,6 +145,10 @@ function modelLabel(model) {
 function addTurn(turn) {
   if (turn.id && seen.has(turn.id)) return;
   if (turn.id) seen.add(turn.id);
+  if (turn.role === 'tool') return addTool(turn);
+  if (turn.role === 'result') return addResult(turn);
+  // Anything a person or the model says ends the run of tools before it.
+  runEl = null;
   const wrap = document.createElement('div');
   wrap.className = 'turn ' + turn.role;
   const time = turn.ts ? new Date(turn.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
@@ -238,6 +272,8 @@ async function openSession(name) {
   store.session = name;
   seen = new Set();
   liveEl = null;
+  runEl = null;
+  tools.clear();
   $('stream').innerHTML = '';
   $('name').textContent = name;
   setStatus(null, null);
@@ -305,7 +341,42 @@ async function sessionSheet() {
   });
 }
 
-async function menuSheet() {
+/* ----------------------------------------------------------------- menu */
+
+// A popover, not a sheet. A sheet is for choosing among many things; this is a
+// short list of actions and it belongs next to the button that opened it.
+function menuSheet() {
+  const pop = $('pop');
+  pop.innerHTML = '';
+  const list = document.createElement('div');
+  list.className = 'group';
+  pop.appendChild(list);
+  const add = (label, on, sub) => button(list, label, sub || null, () => {
+    closePop();
+    on();
+  });
+  add('🧠 Model', () => modelSheet());
+  add('🗂 Oturumlar', () => sessionSheet());
+  add('⚡ Görevler', () => tasksSheet());
+  add('📁 Dosyalar', () => filesSheet(''));
+  add('➕ Yeni oturum', async () => {
+    const r = await post('/api/session', { action: 'new' });
+    if (r.session) openSession(r.session);
+  });
+  add('✏️ Yeniden adlandır', () => renameSheet());
+  // Placed now so it keeps its position; the state arrives a moment later.
+  const bell = add('🔔 Bildirim', () => togglePush(), 'bakılıyor…');
+  pushState().then((state) => {
+    const sub = bell.querySelector('small');
+    if (sub) sub.textContent = state;
+  }).catch(() => {});
+  add('❌ Kapat', () => confirmSheet());
+  $('popveil').classList.add('open');
+}
+
+const closePop = () => $('popveil').classList.remove('open');
+
+async function menuSheetOld() {
   await refresh();
   sheet('Menü · ' + BUILD, (box) => {
     const grid = document.createElement('div');
@@ -415,6 +486,105 @@ function pickModel(provider) {
     });
     button(box, '◀ Geri', null, () => modelSheet());
   });
+}
+
+/* ---------------------------------------------------------------- tools */
+
+// What a call was actually about, in a few words. The first argument is almost
+// always the answer; these are the ones where it is not.
+const TOOL_ARG = {
+  Bash: (i) => i.command,
+  Read: (i) => i.file_path, Write: (i) => i.file_path, Edit: (i) => i.file_path,
+  NotebookEdit: (i) => i.notebook_path,
+  Grep: (i) => i.pattern, Glob: (i) => i.pattern,
+  WebFetch: (i) => i.url, WebSearch: (i) => i.query,
+  Task: (i) => i.description, Skill: (i) => i.skill,
+};
+const TOOL_ICON = {
+  Bash: '❯_', Read: '📖', Write: '✏️', Edit: '✏️', Grep: '🔎', Glob: '🔎',
+  WebFetch: '🌐', WebSearch: '🌐', Task: '🧩', Artifact: '🖼',
+};
+
+const tools = new Map();      // call id -> { name, input, output, error }
+let runEl = null;             // the run currently being appended to
+
+function toolBrief(name, input) {
+  const pick = TOOL_ARG[name];
+  const value = pick ? pick(input || {}) : Object.values(input || {})[0];
+  return value == null ? '' : String(value).replace(/\s+/g, ' ').slice(0, 80);
+}
+
+// Consecutive calls collapse into one line. A turn that runs twenty of them
+// should not push the answer off the screen.
+function addTool(turn) {
+  tools.set(turn.id, { name: turn.name, input: turn.input, output: '', error: false });
+  if (!runEl) {
+    // Captured, not looked up: runEl is reassigned on the next message, and a
+    // handler that reads it later opens whatever run happens to be current.
+    const el = document.createElement('button');
+    el.className = 'toolrun glassy';
+    el.dataset.ids = '';
+    el.onclick = () => toolSheet(el.dataset.ids.split(',').filter(Boolean));
+    $('stream').appendChild(el);
+    runEl = el;
+  }
+  runEl.dataset.ids += (runEl.dataset.ids ? ',' : '') + turn.id;
+  paintRun(runEl);
+  toBottom();
+}
+
+function paintRun(el) {
+  const ids = el.dataset.ids.split(',').filter(Boolean);
+  const rows = ids.map((i) => tools.get(i)).filter(Boolean);
+  const failed = rows.some((r) => r.error);
+  const head = rows.length === 1
+    ? (TOOL_ICON[rows[0].name] || '🔧') + ' ' + rows[0].name
+    : '🔧 ' + rows.length + ' araç';
+  const tail = rows.length === 1
+    ? toolBrief(rows[0].name, rows[0].input)
+    : [...new Set(rows.map((r) => r.name))].slice(0, 3).join(', ');
+  el.innerHTML =
+    '<span class="tname">' + esc(head) + (failed ? ' ⚠' : '') + '</span>' +
+    '<span class="targ">' + esc(tail) + '</span>' +
+    '<span class="tmore">›</span>';
+}
+
+function addResult(turn) {
+  const row = tools.get(turn.for);
+  if (!row) return;
+  row.output = turn.text || '';
+  row.error = !!turn.error;
+  if (runEl && runEl.dataset.ids.split(',').includes(turn.for)) paintRun(runEl);
+}
+
+function toolSheet(ids) {
+  sheet(ids.length === 1 ? tools.get(ids[0]).name : ids.length + ' araç', (box) => {
+    ids.forEach((id) => {
+      const row = tools.get(id);
+      if (!row) return;
+      const card = document.createElement('div');
+      card.className = 'group toolcard';
+      const arg = toolBrief(row.name, row.input);
+      card.innerHTML =
+        '<div class="thead">' + esc((TOOL_ICON[row.name] || '🔧') + ' ' + row.name) +
+        (row.error ? ' <span class="terr">hata</span>' : '') + '</div>' +
+        (arg ? '<div class="code"><pre>' + esc(fullArg(row)) + '</pre></div>' : '') +
+        (row.output
+          ? '<div class="tlabel">Çıktı</div><div class="code"><pre>' +
+            esc(row.output.slice(0, 4000)) + '</pre></div>'
+          : '<div class="tlabel">Çıktı yok</div>');
+      box.appendChild(card);
+    });
+  });
+}
+
+function fullArg(row) {
+  const pick = TOOL_ARG[row.name];
+  if (pick) {
+    const value = pick(row.input || {});
+    if (value != null) return String(value);
+  }
+  return JSON.stringify(row.input || {}, null, 2);
 }
 
 /* ---------------------------------------------------------------- tasks */
@@ -668,9 +838,10 @@ $('tokenSave').onclick = () => {
   boot();
 };
 
-$('btnSessions').onclick = sessionSheet;
+$('who').onclick = sessionSheet;
 $('btnMenu').onclick = menuSheet;
 $('veil').onclick = (e) => { if (e.target === $('veil')) closeSheet(); };
+$('popveil').onclick = closePop;
 
 const text = $('text');
 text.addEventListener('input', () => {

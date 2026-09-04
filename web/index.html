@@ -34,6 +34,8 @@
   --sheen: rgba(255, 255, 255, .34);
   --cast-near: rgba(0, 0, 0, .10);
   --cast-far: rgba(0, 0, 0, .10);
+  /* For surfaces that float over the page with nothing behind them to frost. */
+  --solid: rgba(250, 251, 252, .94);
   --radius: 14px;
 }
 @media (prefers-color-scheme: dark) {
@@ -57,6 +59,7 @@
     --sheen: rgba(255, 255, 255, .09);
     --cast-near: rgba(0, 0, 0, .45);
     --cast-far: rgba(0, 0, 0, .35);
+    --solid: rgba(32, 37, 42, .95);
   }
 }
 * {
@@ -176,6 +179,18 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
   border-left: 3px solid var(--line); color: var(--dim);
 }
 .bubble hr { border: none; border-top: 1px solid var(--line); margin: 12px 0; }
+/* Tables scroll inside their own box; the conversation itself never does. */
+.bubble .tablewrap {
+  overflow-x: auto; margin: 10px 0; border-radius: 10px;
+  border: 1px solid var(--line); -webkit-overflow-scrolling: touch;
+}
+.bubble table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+.bubble th, .bubble td {
+  padding: 8px 11px; text-align: left; vertical-align: top;
+  border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+.bubble thead th { background: var(--code); font-weight: 650; }
+.bubble tbody tr:last-child td { border-bottom: none; }
 .bubble a { color: var(--accent); }
 
 /* The answer arriving. A caret is the cheapest way to say "still going". */
@@ -228,6 +243,66 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
   background: linear-gradient(180deg, var(--sheen), transparent 42%);
 }
 .glassy > * { position: relative; }
+
+/* ---------------------------------------------------------------- tools */
+/* A run of tool calls sits between the messages as one quiet line. It is the
+   only thing in the stream that is not something someone said, so it is the
+   only thing that does not look like a bubble. */
+.toolrun {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  margin: 0 0 12px; padding: 10px 13px;
+  border: none; border-radius: 13px; background: var(--key);
+  color: var(--dim); font: inherit; font-size: 13px; text-align: left;
+  transition: transform .12s ease;
+}
+.toolrun:active { transform: scale(.99); }
+.toolrun .tname { color: var(--ink); font-weight: 600; flex: none; }
+.toolrun .targ {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+}
+.toolrun .tmore { flex: none; color: var(--dim); font-size: 17px; }
+
+.toolcard { padding: 12px 13px; }
+.toolcard .thead { font-weight: 650; margin-bottom: 9px; font-size: 15px; }
+.toolcard .terr { color: var(--warn); font-weight: 500; font-size: 13px; }
+.toolcard .tlabel {
+  font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--dim); margin: 10px 0 5px;
+}
+.toolcard .code { margin: 0; }
+.toolcard pre { max-height: 320px; font-size: 12px; }
+
+/* ----------------------------------------------------------------- menu */
+/* Anchored under the button that opens it, sized to its contents. A sheet
+   would be the wrong shape for seven short actions. */
+#popveil { position: fixed; inset: 0; z-index: 20; display: none; }
+#popveil.open { display: block; }
+#pop {
+  position: absolute; right: 10px;
+  top: calc(env(safe-area-inset-top) + 60px);
+  width: min(252px, calc(100vw - 20px));
+  /* Opacity only. A transform here makes an ancestor containing block, and a
+     backdrop-filter inside one has nothing left to sample — which is exactly
+     how this ended up see-through. */
+  animation: pop .14s ease-out;
+}
+@keyframes pop { from { opacity: 0; } }
+/* This one floats over the conversation with nothing behind it, so unlike a
+   group inside a sheet it has to frost its own backdrop. */
+#pop .group {
+  margin: 0; background: var(--solid);
+  -webkit-backdrop-filter: blur(26px) saturate(180%);
+  backdrop-filter: blur(26px) saturate(180%);
+  box-shadow:
+    inset 0 1px 0 0 var(--rim-top),
+    inset 0 0 0 .5px var(--rim-line),
+    0 2px 6px var(--cast-near),
+    0 18px 44px -12px var(--cast-far);
+}
+#pop .row { min-height: 48px; padding: 11px 14px; font-size: 15px; }
+#popveil { -webkit-backdrop-filter: blur(1px); backdrop-filter: blur(1px); }
 
 /* ---------------------------------------------------------------- tasks */
 .sublabel {
@@ -440,8 +515,7 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
       <div id="name">—</div>
       <div id="sub"><span class="dot off"></span><span id="statusText">bağlanıyor…</span></div>
     </div>
-    <button class="icon" id="btnSessions" title="Oturumlar">🗂</button>
-    <button class="icon" id="btnMenu" title="Menü">☰</button>
+    <button class="icon" id="btnMenu" title="Menü">⋯</button>
   </header>
 
   <div id="stream"></div>
@@ -453,7 +527,8 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 </div>
 
 <div id="veil"><div id="sheet"></div></div>
+<div id="popveil"><div id="pop"></div></div>
 
-<script src="app.js?v=14"></script>
+<script src="app.js?v=18"></script>
 </body>
 </html>

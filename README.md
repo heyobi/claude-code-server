@@ -265,6 +265,18 @@ The token is the only thing standing between anyone already on your tailnet and
 a shell on this machine, so treat `~/.config/claude-code-server/api-token` the
 way you would an SSH key. Delete it and restart to roll it.
 
+### Showing the work
+
+An answer that took two minutes usually spent them running things, and reading
+only the conclusion is reading half of it. The transcript has the whole of it —
+`tool_use` blocks with their arguments, `tool_result` blocks with the output —
+so the stream carries those too. Consecutive calls collapse to one quiet line
+between the messages, "4 araç · Bash ›", and opening it shows each call: what
+was run, and what came back.
+
+That line is the only thing in the conversation that is not something someone
+said, so it is the only thing that is not a bubble.
+
 ### Glass, and what a browser can do
 
 The surfaces are frosted the way the platform's are, and the recipe is one class

@@ -195,6 +195,46 @@ def read_from(path, offset):
     return items, offset
 
 
+def tool_calls(entry):
+    """The tool invocations in one assistant entry."""
+    if entry.get("type") != "assistant":
+        return []
+    content = (entry.get("message") or {}).get("content")
+    if not isinstance(content, list):
+        return []
+    out = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "tool_use":
+            out.append({
+                "id": block.get("id") or "",
+                "name": block.get("name") or "tool",
+                "input": block.get("input") or {},
+            })
+    return out
+
+
+def tool_results(entry):
+    """What came back. These arrive on a later user entry, keyed by call id."""
+    if entry.get("type") != "user":
+        return []
+    content = (entry.get("message") or {}).get("content")
+    if not isinstance(content, list):
+        return []
+    out = []
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "tool_result":
+            continue
+        body = block.get("content")
+        if isinstance(body, list):
+            body = "\n".join(b.get("text", "") for b in body
+                             if isinstance(b, dict))
+        out.append({
+            "for": block.get("tool_use_id") or "",
+            "text": str(body or ""),
+            "error": bool(block.get("is_error")),
+        })
+    return out
+
 def turns_from(path, offset):
     """Conversation turns since offset, each labelled with the model behind it.
 
@@ -204,6 +244,25 @@ def turns_from(path, offset):
     turns = []
     entries, offset = entries_from(path, offset)
     for entry in entries:
+        stamp = entry.get("timestamp", "")
+        # The work comes before the conclusion, in that order.
+        for call in tool_calls(entry):
+            turns.append({
+                "id": call["id"],
+                "role": "tool",
+                "name": call["name"],
+                "input": call["input"],
+                "ts": stamp,
+            })
+        for done in tool_results(entry):
+            turns.append({
+                "id": done["for"] + ":r",
+                "role": "result",
+                "for": done["for"],
+                "text": done["text"][:4000],
+                "error": done["error"],
+                "ts": stamp,
+            })
         text = user_text(entry)
         role = "user"
         if text is None:
@@ -216,7 +275,7 @@ def turns_from(path, offset):
             "role": role,
             "text": text,
             "model": (entry.get("message") or {}).get("model", ""),
-            "ts": entry.get("timestamp", ""),
+            "ts": stamp,
         })
     return turns, offset
 
