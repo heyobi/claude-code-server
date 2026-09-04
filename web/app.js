@@ -218,6 +218,13 @@ async function menuSheet() {
       if (r.session) openSession(r.session);
     });
     button(grid, '❌ Kapat', null, () => confirmSheet());
+    pushState().then((state) => {
+      button(grid, '🔔 Bildirim', state, async () => {
+        closeSheet();
+        try { await togglePush(); } catch (e) { note('Bildirim kurulamadi: ' + e); }
+        toBottom(true);
+      }, state === 'acik');
+    });
   });
 }
 
@@ -258,6 +265,50 @@ function pickModel(provider) {
   });
 }
 
+/* ------------------------------------------------------------ notifications */
+
+function keyBytes(base64) {
+  const padded = (base64 + '='.repeat((4 - (base64.length % 4)) % 4))
+    .replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(padded);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+async function pushState() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return 'yok';
+  if (Notification.permission === 'denied') return 'engelli';
+  const reg = await navigator.serviceWorker.getRegistration();
+  const sub = reg && (await reg.pushManager.getSubscription());
+  return sub ? 'acik' : 'kapali';
+}
+
+async function togglePush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    note('Bu tarayici bildirim desteklemiyor. iOS icin uygulamayi ana ekrana ekle.');
+    return;
+  }
+  const reg = await navigator.serviceWorker.ready;
+  const existing = await reg.pushManager.getSubscription();
+  if (existing) {
+    await post('/api/push/unsubscribe', { endpoint: existing.endpoint });
+    await existing.unsubscribe();
+    note('Bildirimler kapatildi.');
+    return;
+  }
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') {
+    note('Izin verilmedi. Ayarlar > Bildirimler bolumunden acabilirsin.');
+    return;
+  }
+  const { key } = await api('/api/push/key');
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: keyBytes(key),
+  });
+  await post('/api/push/subscribe', sub.toJSON());
+  note('Bildirimler acildi.');
+}
+
 /* ------------------------------------------------------------------ boot */
 
 function gate(message) {
@@ -278,7 +329,9 @@ async function boot() {
   if (brand && known.app) brand.textContent = known.app;
   $('gate').classList.add('hide');
   $('app').classList.remove('hide');
-  if (known.sessions.length) openSession(session || known.sessions[0].name);
+  const asked = new URLSearchParams(location.search).get('session');
+  const wanted = known.sessions.some((s) => s.name === asked) ? asked : null;
+  if (known.sessions.length) openSession(wanted || session || known.sessions[0].name);
 }
 
 $('tokenSave').onclick = () => {
@@ -316,6 +369,12 @@ $('composer').onsubmit = async (e) => {
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
+  // Tapping a notification while the app is already open should move it to
+  // the session the notification came from, not just raise the window.
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    const wanted = (event.data || {}).open;
+    if (wanted && wanted !== session) openSession(wanted);
+  });
 }
 
 boot();

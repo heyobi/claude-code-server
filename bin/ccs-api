@@ -23,6 +23,7 @@ import os
 import re
 import secrets
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -32,6 +33,7 @@ from ccs_common import (                      # noqa: E402  (path set above)
     pane_ready, send_to_session, session_profile, tmux, transcript_of,
     turns_from,
 )
+import ccs_push                              # noqa: E402  (path set above)
 
 WEB = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "web")
 TOKEN_FILE = os.path.join(HOME, ".config", "claude-code-server", "api-token")
@@ -279,6 +281,62 @@ def pane_choices(name):
     return {"question": question, "options": options}
 
 
+# --------------------------------------------------------------------------- push
+
+
+VIEWERS = {}               # session -> how many streams are open on it
+SEEN = {}                  # session -> transcript offset already accounted for
+VIEW_LOCK = threading.Lock()
+WATCH_POLL = 3.0
+
+
+def watching(name, delta):
+    with VIEW_LOCK:
+        VIEWERS[name] = max(0, VIEWERS.get(name, 0) + delta)
+
+
+def is_watched(name):
+    with VIEW_LOCK:
+        return VIEWERS.get(name, 0) > 0
+
+
+def notifier():
+    """Push an answer to the phone, but only when nobody is looking at it.
+
+    A session can finish a long job minutes after you put the phone down, and
+    that is the whole point of the feature. It is also why the check is on
+    open streams rather than on anything the client says: if the app is in
+    front of you the answer is already on screen and a buzz is just noise."""
+    while True:
+        time.sleep(WATCH_POLL)
+        try:
+            _CACHE.pop("sessions", None)
+            for name in ccs_sessions():
+                path = transcript_of(name)
+                if not path:
+                    continue
+                start = SEEN.get(name)
+                if start is None:
+                    # First sight of a session is not news.
+                    SEEN[name] = os.path.getsize(path)
+                    continue
+                turns, offset = turns_from(path, start)
+                SEEN[name] = offset
+                if is_watched(name):
+                    continue
+                said = [t for t in turns if t["role"] == "assistant" and t["text"]]
+                if not said:
+                    continue
+                last = said[-1]
+                ccs_push.send_all({
+                    "title": name,
+                    "body": last["text"][:180],
+                    "session": name,
+                })
+        except Exception as exc:
+            sys.stderr.write("notifier: {}{}".format(exc, chr(10)))
+
+
 # --------------------------------------------------------------------------- http
 
 
@@ -337,6 +395,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.history(query)
         if path == "/api/events":
             return self.events(query)
+        if path == "/api/push/key":
+            if not ccs_push.available():
+                return self.reply(503, {"error": "cryptography not installed"})
+            return self.reply(200, {"key": ccs_push.public_key(),
+                                    "subscribed": len(ccs_push.load_subs())})
         return self.reply(404, {"error": "no such endpoint"})
 
     def do_POST(self):
@@ -352,6 +415,25 @@ class Handler(BaseHTTPRequestHandler):
             return self.session(data)
         if path == "/api/permission":
             return self.permission(data)
+        if path == "/api/push/subscribe":
+            if not ccs_push.available():
+                return self.reply(503, {"error": "cryptography not installed"})
+            if not (data.get("endpoint") and data.get("keys")):
+                return self.reply(400, {"error": "not a subscription"})
+            return self.reply(200, {"ok": True, "count": ccs_push.subscribe(data)})
+        if path == "/api/push/unsubscribe":
+            return self.reply(200, {"ok": True,
+                                    "count": ccs_push.unsubscribe(data.get("endpoint", ""))})
+        if path == "/api/push/test":
+            if not ccs_push.available():
+                return self.reply(503, {"error": "cryptography not installed"})
+            results = ccs_push.send_all({
+                "title": app_name(),
+                "body": "Bildirimler calisiyor.",
+                "session": (data.get("session") or ""),
+            })
+            return self.reply(200, {"sent": [{"endpoint": e, "status": st, "detail": d}
+                                             for e, st, d in results]})
         return self.reply(404, {"error": "no such endpoint"})
 
     # ---- handlers
@@ -393,6 +475,7 @@ class Handler(BaseHTTPRequestHandler):
         last_beat = time.time()
         was_ready = None
         prompt_shown = None
+        watching(name, +1)
         try:
             while True:
                 time.sleep(TAIL_POLL)
@@ -426,6 +509,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):
             return
+        finally:
+            watching(name, -1)
 
     def emit(self, kind, payload):
         blob = "event: {}\ndata: {}\n\n".format(kind, json.dumps(payload))
@@ -528,6 +613,10 @@ def main():
         return
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.daemon_threads = True
+    if ccs_push.available():
+        threading.Thread(target=notifier, daemon=True).start()
+    else:
+        sys.stderr.write("push disabled: cryptography not installed\n")
     sys.stderr.write("ccs-api on {}:{}\n".format(args.host, args.port))
     server.serve_forever()
 

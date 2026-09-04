@@ -256,6 +256,29 @@ The token is the only thing standing between anyone already on your tailnet and
 a shell on this machine, so treat `~/.config/claude-code-server/api-token` the
 way you would an SSH key. Delete it and restart to roll it.
 
+### Notifications
+
+A long job finishes minutes after you put the phone down, which is the case the
+web app could not cover on its own. `ccs-api` watches every session's transcript
+and sends a Web Push when an answer appears — but only when no stream is open on
+that session, because if the app is in front of you the answer is already on
+screen and a buzz is just noise.
+
+Turn it on from the menu. On iOS the app has to be on the Home Screen first;
+Safari does not offer push to a page in a tab.
+
+This is the one part that needs a library outside the standard one: RFC 8291
+wants ECDH on P-256 and RFC 8292 wants an ES256 signature. `python3-cryptography`
+covers both, and without it push reports itself unavailable and nothing else
+changes.
+
+Worth knowing if you go changing it: the payload encryption is easy to get
+subtly wrong, and a push service answers a wrong one with a bare 400. The order
+of the two public keys in the `WebPush: info` string is receiver then sender, and
+the JOSE signature is the raw `r||s` pair rather than the DER the library hands
+back. A round trip — encrypt, then decrypt the way a browser would — catches
+both in a second.
+
 ## Backends
 
 A backend is chosen by environment variables that Claude Code reads at startup,
