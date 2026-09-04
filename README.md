@@ -339,9 +339,11 @@ typing.
 
 The model sits in a pill, not as plain text beside the attach button — a label
 next to a control reads as a caption, and nobody taps a caption. The panel
-rests on the floor with no clearance at all: every version that kept some of
-the home indicator's inset read as hovering, and the system draws that
-indicator over content everywhere else too.
+keeps three quarters of the home indicator's inset off the floor, which is
+where the apps it is measured against sit. It was flat on the floor for a
+while, and correctly so: the window was then one status bar short of the
+screen and everything needed dragging down. Once the window reached the glass
+the same rule read as stuck to it.
 
 Getting it to actually reach the floor took some finding, and one wrong turn.
 On an installed iOS app with a translucent status bar the page is drawn from
@@ -610,6 +612,17 @@ session from a busy one, and the first user message is where the topic slug
 comes from.
 
 ## Things that cost us an afternoon
+
+### A status that never comes back
+
+The header said "connecting" through a connection that had already come back.
+Two halves to it. `EventSource` reports an error every time it *begins*
+reconnecting, so the first blip painted the disconnected state; and the server
+only sent a status event when readiness changed, so nothing ever repainted it.
+Now the client waits several seconds to see whether the reconnect takes before
+saying anything, asks for the state again when the stream opens, and the status
+rides the heartbeat rather than only changes. Any client that missed one is
+right again within fifteen seconds.
 
 ### The keyboard moves the window, not the page
 

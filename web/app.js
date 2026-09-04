@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v37';
+const BUILD = 'v38';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -277,9 +277,24 @@ function listen() {
     showAsk(p && p.options ? p : null);
   });
   stream.addEventListener('reload', () => { stream.close(); openSession(session); });
-  // EventSource reconnects by itself; nothing to do on error but say so.
-  stream.onerror = () => setStatus(null, null);
+  // EventSource reconnects by itself, and it reports an error every time it
+  // starts doing so. Saying "connecting" on the first blip left the header
+  // stuck there through a connection that had already come back, so it waits
+  // to see whether the reconnect takes.
+  stream.onopen = () => {
+    clearTimeout(dropTimer);
+    api('/api/state').then((s) => {
+      const row = (s.sessions || []).find((r) => r.name === session);
+      if (row) setStatus(row.ready, row.profile);
+    }).catch(() => {});
+  };
+  stream.onerror = () => {
+    clearTimeout(dropTimer);
+    dropTimer = setTimeout(() => setStatus(null, null), 4000);
+  };
 }
+
+let dropTimer = 0;
 
 /* ----------------------------------------------------------------- views */
 

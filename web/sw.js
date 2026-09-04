@@ -1,8 +1,8 @@
 /* The shell is worth caching so the app opens instantly and survives a moment
  * without the tailnet. Anything under /api never is: stale session state is
  * worse than no session state. */
-const SHELL = 'ccs-shell-v38';
-const FILES = ['./', './index.html', './app.js?v=26', 
+const SHELL = 'ccs-shell-v39';
+const FILES = ['./', './index.html', './app.js',
                './icon-180.png', './icon-512.png'];
 
 self.addEventListener('install', (event) => {
@@ -59,5 +59,9 @@ self.addEventListener('fetch', (event) => {
         caches.open(SHELL).then((c) => c.put(event.request, copy)).catch(() => {});
         return response;
       })
-      .catch(() => caches.match(event.request).then((hit) => hit || caches.match('./index.html'))));
+      // ignoreSearch, because the script is asked for with a cache-busting
+      // version on it and what was stored is the bare path. Without this the
+      // shell comes back from the cache and its only script does not.
+      .catch(() => caches.match(event.request, { ignoreSearch: true })
+        .then((hit) => hit || caches.match('./index.html'))));
 });

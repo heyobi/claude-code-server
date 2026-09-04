@@ -875,6 +875,12 @@ class Handler(BaseHTTPRequestHandler):
 
                 if time.time() - last_beat > HEARTBEAT:
                     last_beat = time.time()
+                    # The status goes out with the beat, not only when it
+                    # changes. A client that missed one — a reconnect, a
+                    # phone that slept — otherwise sits on whatever it saw
+                    # last, and what it saw last was usually "connecting".
+                    self.emit("status", {"ready": pane_ready(name),
+                                         "profile": session_profile(name)})
                     self.wfile.write(b": beat\n\n")
                     self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):
