@@ -322,25 +322,41 @@ def send_to_session(name, text):
     tmux("send-keys", "-t", name, "Enter")
 
 
-def pane_ready(name):
+def pane_lines(name):
+    """The pane as it is drawn right now.
+
+    Three separate readers used to each capture it for themselves, which put
+    the ceiling on how often the live preview could refresh: at three captures
+    a tick, polling faster meant three times the work. They take the lines now
+    and the caller reads once.
+    """
+    return tmux("capture-pane", "-p", "-t", name).splitlines()
+
+
+def pane_ready(name, lines=None):
     """A tmux session exists well before Claude Code has finished loading a
     resumed conversation. Typing into that gap loses the message, or gets an
     answer from a session that has not read its own history yet."""
-    tail = tmux("capture-pane", "-p", "-t", name).splitlines()[-8:]
+    tail = (lines if lines is not None else pane_lines(name))[-8:]
     if any(re.search(r'to interrupt', line, re.I) for line in tail):
         return False
     return any(re.match(r'^\s*[>\u276f]', line) for line in tail)
 
 
-SPINNER = re.compile(r"[✽✻✳✶✢·*]\s+(\w[\w ]*)…\s*\(([^)]*)\)")
+# The word in the spinner is one of Claude Code's inventions and half of them
+# are hyphenated — "Fiddle-faddling", "Noodle-doodling". A pattern that stopped
+# at a hyphen matched none of those, so the status went blank and the spinner
+# line was not recognised as furniture either: it went out as part of the
+# answer, once a second, changing every time.
+SPINNER = re.compile(r"[✽✻✳✶✢·*]\s+(\w[\w '\-]*)…\s*\(([^)]*)\)")
 # The pane carries the answer and also the furniture around it: the spinner,
 # the finished-in-Ns line, and the rotating tips. None of that is the answer.
-DONE_LINE = re.compile(r"[✻✽✳✶✢]\s+\w+ for .*· done")
+DONE_LINE = re.compile(r"[✻✽✳✶✢]\s+[\w'\-]+ for .*· done")
 CHROME = ("⎿", "auto mode on", "for shortcuts", "esc to interrupt",
-          "Tip:", "free reviews left")
+          "Tip:", "free reviews left", "to run in background")
 
 
-def pane_progress(name):
+def pane_progress(name, lines=None):
     """What the session is saying right now, before it is written down.
 
     A turn only reaches the transcript once it is finished, so a client reading
@@ -349,7 +365,8 @@ def pane_progress(name):
     that, which means it is limited to what fits on screen and is a preview
     rather than a record: the real text arrives with the turn.
     """
-    lines = [l.rstrip() for l in tmux("capture-pane", "-p", "-t", name).splitlines()]
+    lines = [l.rstrip() for l in
+             (lines if lines is not None else pane_lines(name))]
 
     status = ""
     for line in reversed(lines):
@@ -358,10 +375,26 @@ def pane_progress(name):
             status = found.group(2).strip()
             break
 
+    # Start from what you asked, not from the last thing it said. An answer is
+    # drawn as several "●" blocks — a sentence, a tool, another sentence — and
+    # starting at the newest one meant the preview threw away everything above
+    # it each time a new block appeared: text arrived, vanished, arrived again.
+    # The line you typed is drawn with "❯", and so is the input box at the
+    # bottom, so the last ten lines are left out of the search.
+    asked = None
+    for index, line in enumerate(lines[:-10]):
+        if line.startswith("\u276f"):
+            asked = index
     start = None
-    for index, line in enumerate(lines):
-        if line.lstrip().startswith("●"):
-            start = index
+    if asked is not None:
+        for index in range(asked + 1, len(lines)):
+            if lines[index].lstrip().startswith("●"):
+                start = index
+                break
+    if start is None:
+        for index, line in enumerate(lines):
+            if line.lstrip().startswith("●"):
+                start = index
     if start is None:
         return {"text": "", "status": status}
 

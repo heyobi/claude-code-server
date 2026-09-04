@@ -28,7 +28,10 @@ CCS_AUTO_RENAME=1
 # Size of the detached tmux pane. Larger panes render the Claude Code UI better
 # for clients that attach later.
 CCS_PANE_WIDTH=200
-CCS_PANE_HEIGHT=50
+# The live preview is read off the pane, so an answer taller than the pane
+# loses its beginning while it is still being written. Tall enough that a long
+# one fits.
+CCS_PANE_HEIGHT=200
 
 # Channels (experimental in Claude Code): a messaging bridge that injects
 # messages into a session, so you can drive it from Telegram or Discord.

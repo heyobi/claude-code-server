@@ -10,7 +10,7 @@
 : "${CCS_AUTO_RENAME:=1}"                  # 1 = rename sessions after their topic
 : "${CCS_POOL_IDLE:=1}"                    # keep a spare session waiting; 0 = only on demand
 : "${CCS_PANE_WIDTH:=200}"
-: "${CCS_PANE_HEIGHT:=50}"
+: "${CCS_PANE_HEIGHT:=200}"
 
 # Channels (experimental in Claude Code). A messaging bridge that injects
 # messages into a session, so you can drive it from Telegram, Discord, and so

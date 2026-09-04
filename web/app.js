@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v42';
+const BUILD = 'v43';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -1465,6 +1465,16 @@ text.addEventListener('input', () => { paintSend(); toBottom(); });
 // shortcut it expects instead.
 text.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
+});
+
+// A control tapped while the message box has focus would otherwise take the
+// focus away first: iOS closes the keyboard, the composer drops to the floor,
+// and the click lands where the button no longer is — so the first tap only
+// put the keyboard away and the second one was the one that worked. Refusing
+// the default on pointerdown leaves the focus alone, and one tap is one tap.
+['send', 'attach', 'modelchip', 'jump'].forEach((id) => {
+  const el = $(id);
+  if (el) el.addEventListener('pointerdown', (e) => e.preventDefault());
 });
 
 $('attach').onclick = () => { tap(); $('picker').click(); };

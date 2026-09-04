@@ -32,7 +32,8 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from ccs_common import (                      # noqa: E402  (path set above)
     CFG, HOME, POOLDIR, PROJDIR, WORKDIR, _CACHE, cached, ccs, ccs_sessions,
     next_auto_name,
-    last_words, pane_progress, pane_ready, send_to_session, session_profile,
+    last_words, pane_lines, pane_progress, pane_ready, send_to_session,
+    session_profile,
     session_uuid, tmux, transcript_of,
     turns_from,
 )
@@ -42,7 +43,7 @@ WEB = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
 TOKEN_FILE = os.path.join(HOME, ".config", "claude-code-server", "api-token")
 PROFILES = os.path.join(HOME, ".config", "claude-code-server", "profiles")
 
-TAIL_POLL = 0.8        # seconds between transcript checks while streaming
+TAIL_POLL = 0.3        # seconds between transcript checks while streaming
 HEARTBEAT = 15.0       # keep intermediaries from closing an idle SSE stream
 HISTORY_MAX = 400      # turns sent on a cold load
 GATEWAY_SWEEP = 120.0  # seconds between looks at gateways nobody is using
@@ -491,9 +492,9 @@ CHOICE = re.compile(r"^\s*[>❯]?\s*(\d)[.)]\s+(.{2,60})")
 PROMPT_HINTS = ("do you want", "proceed", "allow this", "onayl")
 
 
-def pane_choices(name):
+def pane_choices(name, lines=None):
     """A session sitting on a numbered prompt, rendered as something tappable."""
-    tail = tmux("capture-pane", "-p", "-t", name).splitlines()[-25:]
+    tail = (lines if lines is not None else pane_lines(name))[-25:]
     lowered = [line.lower() for line in tail]
     if not any(hint in line for line in lowered for hint in PROMPT_HINTS):
         return None
@@ -936,7 +937,10 @@ class Handler(BaseHTTPRequestHandler):
                 for turn in steps:
                     self.emit("turn", turn)
 
-                ready = pane_ready(name)
+                # One capture, three readers. Polling three times a second
+                # is only affordable because this is not done three times.
+                pane = pane_lines(name)
+                ready = pane_ready(name, pane)
                 if ready != was_ready:
                     was_ready = ready
                     self.emit("status", {"ready": ready,
@@ -949,13 +953,13 @@ class Handler(BaseHTTPRequestHandler):
                 # Reading it there is what makes the client feel connected to a
                 # session rather than waiting on one.
                 if not ready:
-                    live = pane_progress(name)
+                    live = pane_progress(name, pane)
                     stamp = live["text"] + "|" + live["status"]
                     if stamp != shown:
                         shown = stamp
                         self.emit("partial", live)
 
-                prompt = pane_choices(name) if not ready else None
+                prompt = pane_choices(name, pane) if not ready else None
                 fingerprint = json.dumps(prompt, sort_keys=True) if prompt else None
                 if fingerprint != prompt_shown:
                     prompt_shown = fingerprint
