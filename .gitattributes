@@ -1,0 +1,11 @@
+# Shell scripts and unit files must keep LF endings or they break on Linux.
+*.sh        text eol=lf
+*.py        text eol=lf
+*.service   text eol=lf
+*.timer     text eol=lf
+*.snippet   text eol=lf
+*.example   text eol=lf
+install.sh  text eol=lf
+bin/ccs-new  text eol=lf
+bin/ccs-list text eol=lf
+*.md        text eol=lf
