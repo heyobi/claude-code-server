@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v26';
+const BUILD = 'v27';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -1233,6 +1233,38 @@ $('composer').onsubmit = async (e) => {
   }
   toBottom(true);
 };
+
+/* ------------------------------------------------------------- viewport */
+
+// iOS does not shrink the page for the keyboard. It leaves the layout alone
+// and slides a window over it, which takes anything fixed to the layout with
+// it — the header off the top, the composer down behind the keys. The visual
+// viewport is the only thing that knows where the window actually is, so the
+// whole shell is sized and placed from it.
+function fitViewport() {
+  const vv = window.visualViewport;
+  const root = document.documentElement;
+  if (!vv) return;
+  // Nothing here is scrollable, so a page offset can only be iOS shoving the
+  // document out of the way of the keyboard. Put it back and measure.
+  if (window.scrollY) window.scrollTo(0, 0);
+  const covered = Math.max(0, window.innerHeight - vv.height);
+  root.style.setProperty('--vh', vv.height + 'px');
+  root.style.setProperty('--vtop', vv.offsetTop + 'px');
+  const open = covered > 80;             // a keyboard, not a browser chrome nudge
+  if (open !== root.classList.contains('kb')) {
+    root.classList.toggle('kb', open);
+    // Whatever you were reading should still be the thing in front of you.
+    requestAnimationFrame(() => toBottom());
+  }
+}
+
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', fitViewport);
+  window.visualViewport.addEventListener('scroll', fitViewport);
+  window.addEventListener('orientationchange', () => setTimeout(fitViewport, 150));
+  fitViewport();
+}
 
 // An open stream is how the server knows nobody needs a notification, so it
 // has to mean "on screen" rather than "app not killed". Backgrounded, we let go

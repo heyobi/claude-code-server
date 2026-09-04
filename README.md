@@ -292,6 +292,16 @@ support `url()` in `backdrop-filter`
 which is the browser this is built for — it renders as nothing. Chasing it would
 have looked right on the development machine and wrong on the phone.
 
+### Nothing has an edge
+
+There is no header bar and no composer bar. Two floating controls and a title
+sit at the top, the composer panel sits at the bottom, and the conversation runs
+underneath both, fading into the page colour instead of stopping at a line. A
+drawn edge across the top reads as a lid over the page; a fade reads as the page
+continuing. The fade is two layers — a masked blur with the page colour over it
+— so a browser that will not mask a `backdrop-filter` still carries the text
+off, it just does it without the blur.
+
 ### The composer
 
 One panel: what you are writing on top, what you are writing it with underneath
@@ -532,6 +542,24 @@ session from a busy one, and the first user message is where the topic slug
 comes from.
 
 ## Things that cost us an afternoon
+
+### The keyboard moves the window, not the page
+
+iOS does not shrink the page when the keyboard opens. It leaves the layout
+alone and slides a window over it, so anything `position: fixed` goes with the
+layout, not with what you can see: the header off the top of the screen, the
+composer down behind the keys. That is why the header disappeared while typing
+and the composer floated a thumb's width above the keyboard — `env(safe-area-inset-bottom)`
+still reports the home indicator that the keyboard is now covering.
+
+The fix is to stop trusting the layout viewport. The whole shell is one fixed
+box placed at `visualViewport.offsetTop` and sized to `visualViewport.height`,
+with the header, the conversation and the composer positioned inside it. Then
+the composer's floor is the top of the keyboard when there is one and the home
+indicator when there is not, and the header cannot leave. A class on the root
+element while the keyboard is up zeroes both safe-area insets, because neither
+edge is exposed any more. Overlays are anchored the same way, so a sheet opened
+while typing does not run underneath the keys.
 
 ### The home directory trust trap
 
