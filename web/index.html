@@ -384,6 +384,10 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 @keyframes pop { from { opacity: 0; } }
 /* This one floats over the conversation with nothing behind it, so unlike a
    group inside a sheet it has to frost its own backdrop. */
+/* Denser than a sheet's rows: this is a short list of actions read at a
+   glance, not a list of things to compare. */
+#pop .row { min-height: 46px; padding: 10px 14px; font-size: 15px; gap: 10px; }
+#pop .row small { font-size: 12px; }
 #pop .group {
   margin: 0; background: var(--solid);
   -webkit-backdrop-filter: blur(26px) saturate(180%);
@@ -792,6 +796,6 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 <div id="veil"><div id="sheet"></div></div>
 <div id="popveil"><div id="pop"></div></div>
 
-<script src="app.js?v=34"></script>
+<script src="app.js?v=35"></script>
 </body>
 </html>

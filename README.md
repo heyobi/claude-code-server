@@ -347,7 +347,14 @@ fixed to the bottom of it floats that far above the glass. The phone's own
 numbers settled it — screen 874, window 812, top inset 62. The strip is still
 ours to paint into, so the composer is pushed down into it by the measured
 difference, guarded on the top inset being non-zero, on portrait, and on being
-the installed app. There is a layout readout in the
+the installed app.
+
+Measured more than once, too: the first measurement lies. The app reports the
+full screen height for its window until the layout settles, which reads as no
+shortfall — and that is the moment a script at the end of the body runs. So it
+is taken again as things come to rest, and on every resize, and never while the
+keyboard is up, because a composer that jumps mid-sentence is worse than one
+sitting a little high. There is a layout readout in the
 menu — screen, window, visual viewport, where the panel's bottom edge actually
 landed, and whether this is the installed app or a browser tab. A gap reported
 from a phone and reproducible nowhere else is a measurement problem, and the

@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v34';
+const BUILD = 'v35';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -596,8 +596,12 @@ function measurements() {
     'görünür ' + (vv ? Math.round(vv.height) + '+' + Math.round(vv.offsetTop) : '—'),
     'kutu ' + Math.round(dock.bottom),
     'pay ' + foot,
-    'alt güvenli ' + probe('env(safe-area-inset-bottom)') + 'px',
-    'eksik ' + slackBelow() + 'px',
+    'güvenli ' + probe('env(safe-area-inset-top)') + '/' +
+      probe('env(safe-area-inset-bottom)'),
+    // What it works out to now, and what is actually applied: they differ when
+    // the first measurement was taken before the window settled.
+    'eksik ' + slackBelow() + ' → ' +
+      getComputedStyle(document.documentElement).getPropertyValue('--slack').trim(),
     home ? 'uygulama' : 'tarayıcı',
   ].join(' · ');
 }
@@ -1441,12 +1445,30 @@ function probe(expr) {
   return h;
 }
 
+// Measured more than once, because the first measurement lies. An installed
+// app reports the full screen height for its window until the layout settles,
+// which reads as no shortfall at all — and that is exactly the moment the
+// script runs. So it is taken again as things come to rest, and again whenever
+// the window changes size.
+let slackPx = -1;
 function fitSlack() {
-  document.documentElement.style.setProperty('--slack', slackBelow() + 'px');
+  // Not while typing: the keyboard moves everything, and a composer that
+  // jumps mid-sentence is worse than one sitting a little high.
+  if (document.documentElement.classList.contains('kb')) return;
+  const now = slackBelow();
+  if (now === slackPx) return;
+  slackPx = now;
+  document.documentElement.style.setProperty('--slack', now + 'px');
 }
 
 fitSlack();
-window.addEventListener('orientationchange', () => setTimeout(fitSlack, 200));
+[150, 500, 1500].forEach((ms) => setTimeout(fitSlack, ms));
+window.addEventListener('resize', fitSlack);
+window.addEventListener('pageshow', fitSlack);
+window.addEventListener('orientationchange', () => setTimeout(fitSlack, 250));
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', () => setTimeout(fitSlack, 60));
+}
 
 
 // iOS does not shrink the page for the keyboard. It leaves the layout alone
