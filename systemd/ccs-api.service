@@ -1,0 +1,16 @@
+[Unit]
+Description=Claude Code Server web API
+Documentation=https://github.com/heyobi/claude-code-server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/claude-code-server/bin/ccs-api
+Restart=always
+RestartSec=10
+StandardOutput=append:%h/.claude/claude-code-server/api.log
+StandardError=append:%h/.claude/claude-code-server/api.log
+
+[Install]
+WantedBy=default.target

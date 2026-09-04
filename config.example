@@ -54,3 +54,12 @@ CCS_CHANNEL_SESSION=""
 # commands, which is usually what you want on a machine you care about.
 CCS_MODEL=""
 CCS_PERMISSION_MODE=""
+
+# Web app (ccs-api). It listens on localhost; put it on your tailnet with
+# `tailscale serve --bg --https=443 http://127.0.0.1:8787` so the browser gets a
+# real certificate — a service worker and Add to Home Screen both need one.
+CCS_API_HOST=127.0.0.1
+CCS_API_PORT=8787
+
+# What the installed app calls itself. Defaults to CCS_PREFIX.
+CCS_APP_NAME=""

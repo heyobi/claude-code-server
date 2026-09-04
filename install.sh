@@ -32,6 +32,8 @@ say "Installing to $DEST"
 mkdir -p "$DEST" "$BINDIR" "$UNITDIR" "$CONFDIR" "$CONFDIR/profiles"
 rm -rf "$DEST/bin"
 cp -r "$SRC/bin" "$DEST/bin"
+rm -rf "$DEST/web"
+cp -r "$SRC/web" "$DEST/web"
 chmod +x "$DEST"/bin/*
 
 ln -sf "$DEST/bin/ccs-new"    "$BINDIR/ccs-new"
@@ -41,6 +43,7 @@ ln -sf "$DEST/bin/ccs-close"   "$BINDIR/ccs-close"
 ln -sf "$DEST/bin/ccs-profile" "$BINDIR/ccs-profile"
 ln -sf "$DEST/bin/ccs-bot"     "$BINDIR/ccs-bot"
 ln -sf "$DEST/bin/ccs-gateway-sync" "$BINDIR/ccs-gateway-sync"
+ln -sf "$DEST/bin/ccs-api"     "$BINDIR/ccs-api"
 say "Linked ccs-new, ccs-list, ccs-resume, ccs-close and ccs-profile into $BINDIR"
 
 case ":$PATH:" in
@@ -67,6 +70,7 @@ cp "$SRC/systemd/claude-code-server.service"       "$UNITDIR/"
 cp "$SRC/systemd/claude-code-server-check.service" "$UNITDIR/"
 cp "$SRC/systemd/claude-code-server.timer"         "$UNITDIR/"
 cp "$SRC/systemd/ccs-bot.service"                  "$UNITDIR/"
+cp "$SRC/systemd/ccs-api.service"                  "$UNITDIR/"
 systemctl --user daemon-reload
 systemctl --user enable claude-code-server.service claude-code-server.timer >/dev/null
 systemctl --user start  claude-code-server.timer

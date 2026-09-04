@@ -206,6 +206,56 @@ Two Telegram limits are worth knowing: a bot can delete messages for 48 hours
 and no longer, and it can upload 50 MB and download 20 MB. Running your own
 Bot API server raises the transfer limits to 2 GB.
 
+## The web app
+
+`ccs-api` serves a small progressive web app and the HTTP control plane behind
+it. It exists because both other surfaces show you a relay rather than the
+conversation: the Claude apps only display what arrived while Remote Control was
+connected, and a chat bot only what it was around to forward. The transcript on
+disk always has more.
+
+That difference is not academic. Move a session onto another backend and Remote
+Control drops, because Claude Code turns it off whenever `ANTHROPIC_BASE_URL` is
+set — measured, not assumed: a transparent proxy that forwarded everything to
+Anthropic still got no bridge. The turns you exchange meanwhile are missing from
+the app afterwards. The web app reads the transcript, so they are simply there,
+each labelled with the model that produced it:
+
+```
+opus-5            İyiyim, sen nasılsın? İpucu 123 — aklımda
+gemini-3.8-flash  Evet, ipucu 123'tü.
+gemini-3.8-flash  Google tarafından geliştirilen Gemini 3.8 Flash modeliyim.
+opus-5            İpucu 123. Bir de düzeltme: az önce "Gemini 3.8 Flash" dedim…
+```
+
+Live updates are Server-Sent Events, not websockets: the traffic is one
+directional, the browser reconnects on its own, and it is a few lines of
+standard library rather than a frame codec. A client says which byte of the
+transcript it has reached, so reconnecting resumes exactly there and a duplicate
+is not expressible.
+
+```sh
+systemctl --user enable --now ccs-api
+ccs-api --print-token          # paste this into the app once
+```
+
+It listens on `127.0.0.1:8787`. Put it on your tailnet with TLS, which is what
+makes it installable — a service worker and Add to Home Screen both need a
+secure context, and plain `http://100.x.y.z` is not one:
+
+```sh
+sudo tailscale serve --bg --https=443 http://127.0.0.1:8787
+```
+
+That gives `https://<host>.<tailnet>.ts.net` with a real certificate, reachable
+from anywhere your phone can run Tailscale and from nowhere else. Enable *HTTPS
+Certificates* in the tailnet's DNS settings first, or the cert request is
+refused. Nothing is exposed to the internet; this is not `tailscale funnel`.
+
+The token is the only thing standing between anyone already on your tailnet and
+a shell on this machine, so treat `~/.config/claude-code-server/api-token` the
+way you would an SSH key. Delete it and restart to roll it.
+
 ## Backends
 
 A backend is chosen by environment variables that Claude Code reads at startup,
