@@ -282,6 +282,17 @@ def agy_steps(uuid, offset=0):
             })
     return turns, offset + used
 
+def session_model(profile):
+    """Which model a session is actually asking for.
+
+    A gateway profile names it in the env file the launcher sources; the Claude
+    login takes it from the pool config.
+    """
+    if profile and profile != "-":
+        return profile_env(profile).get("CCS_PROFILE_MODEL", "")
+    return (CFG.get("CCS_MODEL") or "").strip()
+
+
 def describe(name):
     """A session, and what it is doing.
 
@@ -292,9 +303,11 @@ def describe(name):
     ready = pane_ready(name)
     path = transcript_of(name)
     said, at = last_words(path) if path else ("", 0)
+    profile = session_profile(name)
     row = {
         "name": name,
-        "profile": session_profile(name),
+        "profile": profile,
+        "model": session_model(profile),
         "ready": ready,
         "last": said,
         "at": at,
@@ -347,6 +360,61 @@ TEXTY = {
     ".css": "text/css", ".csv": "text/csv", ".log": "text/plain",
 }
 
+
+PATHISH = re.compile(
+    r"(/?(?:[\w.-]+/)*[\w.-]+\."
+    r"(?:png|jpe?g|gif|webp|svg|avif|mp3|wav|ogg|m4a|flac|mp4|webm|mov|pdf"
+    r"|html?|md|csv|json|txt|log|py|js|ts|sh|ya?ml|c|cpp|rs|go|java))")
+
+
+def session_files(name):
+    """Files this conversation mentioned, that are really there.
+
+    A file browser rooted at the workspace shows you everything on the
+    machine, which is not what you want while reading one conversation. What
+    you want is what this one produced or was given, so that is what it lists
+    — and nothing at all when there is none."""
+    path = transcript_of(name)
+    seen = []
+    blobs = []
+    if path:
+        try:
+            with open(path, encoding="utf-8", errors="ignore") as handle:
+                blobs.append(handle.read())
+        except OSError:
+            pass
+    uuid = session_uuid(name)
+    if uuid:
+        steps = os.path.join(HOME, ".claude", "claude-code-server", "agy-steps",
+                             uuid + ".jsonl")
+        try:
+            with open(steps, encoding="utf-8", errors="ignore") as handle:
+                blobs.append(handle.read())
+        except OSError:
+            pass
+
+    root_dir = os.path.realpath(WORKDIR)
+    found = {}
+    for candidate in PATHISH.findall(" ".join(blobs)):
+        if candidate in found:
+            continue
+        full = inside(candidate)
+        if not full or not os.path.isfile(full):
+            continue
+        rel = os.path.relpath(full, root_dir)
+        if rel in found:
+            continue
+        try:
+            info = os.stat(full)
+        except OSError:
+            continue
+        found[rel] = {
+            "name": os.path.basename(rel), "path": rel, "dir": False,
+            "size": info.st_size, "at": int(info.st_mtime),
+            "kind": kind_of(rel),
+        }
+    rows = sorted(found.values(), key=lambda r: -r["at"])
+    return rows[:60]
 
 def inside(path):
     """Resolve a request to a real path under the workspace, or nothing.
@@ -553,6 +621,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/events":
             return self.events(query)
         if path == "/api/files":
+            named = (query.get("session") or [""])[0]
+            if named:
+                if named not in ccs_sessions():
+                    return self.reply(404, {"error": "no such session"})
+                return self.reply(200, {"dir": "", "root": named,
+                                        "session": named,
+                                        "entries": session_files(named)})
             rows = listing((query.get("dir") or [""])[0])
             if rows is None:
                 return self.reply(404, {"error": "no such directory"})

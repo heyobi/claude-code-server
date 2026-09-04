@@ -36,7 +36,7 @@
   --cast-far: rgba(0, 0, 0, .10);
   /* For surfaces that float over the page with nothing behind them to frost. */
   --solid: rgba(250, 251, 252, .94);
-  --veilglass: rgba(255, 255, 255, .40);
+  --veilglass: rgba(255, 255, 255, .26);
   --radius: 14px;
 }
 @media (prefers-color-scheme: dark) {
@@ -61,7 +61,7 @@
     --cast-near: rgba(0, 0, 0, .45);
     --cast-far: rgba(0, 0, 0, .35);
     --solid: rgba(32, 37, 42, .95);
-    --veilglass: rgba(20, 24, 28, .40);
+    --veilglass: rgba(20, 24, 28, .28);
   }
 }
 * {
@@ -82,7 +82,7 @@ body {
 }
 /* The bars float over the conversation rather than sitting beside it. Without
    something passing underneath, a blur has nothing to blur. */
-:root { --bar-top: 62px; --bar-bottom: 74px; }
+:root { --bar-top: 62px; --bar-bottom: 108px; }
 
 /* ---------------------------------------------------------------- header */
 header {
@@ -350,6 +350,11 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
   opacity: .8;
 }
 .chatrow .ctick { color: var(--accent); font-weight: 700; margin-left: 8px; }
+.chatrow .cpin {
+  margin-left: 8px; font-size: 15px; opacity: .22; align-self: center;
+  padding: 6px; border-radius: 50%;
+}
+.chatrow .cpin.on { opacity: 1; }
 .row.on.chatrow .cname { color: var(--accent); }
 
 /* ---------------------------------------------------------------- tasks */
@@ -399,15 +404,46 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 #composer {
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 5;
   display: block;
-  padding: 9px 12px calc(env(safe-area-inset-bottom) + 9px);
-  background: var(--glass);
-  -webkit-backdrop-filter: saturate(180%) blur(24px);
-  backdrop-filter: saturate(180%) blur(24px);
+  padding: 8px 10px calc(env(safe-area-inset-bottom) + 8px);
+  background: var(--veilglass);
+  -webkit-backdrop-filter: saturate(170%) blur(30px);
+  backdrop-filter: saturate(170%) blur(30px);
   border-top: .5px solid var(--rim-line);
-  box-shadow: inset 0 1px 0 0 var(--rim-top), 0 -2px 14px -6px var(--cast-far);
 }
-#entry { display: flex; gap: 8px; align-items: flex-end; }
-#attach { width: 40px; height: 40px; font-size: 22px; line-height: 1; }
+/* One panel: what you are writing on top, what you are writing it with
+   underneath. The bar behind it is only a backdrop. */
+#dock {
+  background: var(--key); border-radius: 24px; padding: 6px 6px 6px;
+  -webkit-backdrop-filter: blur(16px) saturate(170%);
+  backdrop-filter: blur(16px) saturate(170%);
+  box-shadow:
+    inset 0 1px 0 0 var(--rim-top),
+    inset 0 0 0 .5px var(--rim-line),
+    0 2px 10px -4px var(--cast-far);
+}
+#controls { display: flex; align-items: center; gap: 6px; padding: 2px 2px 0; }
+#controls .fill { flex: 1; }
+#attach { width: 38px; height: 38px; font-size: 21px; line-height: 1; }
+#modelchip {
+  border: none; background: none; color: var(--dim);
+  font: inherit; font-size: 13.5px; padding: 8px 12px; border-radius: 999px;
+  max-width: 46vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-height: 38px;
+}
+#modelchip:active { background: var(--line); }
+
+/* Messages typed while it was busy, waiting their turn. */
+#queued { display: none; flex-wrap: wrap; gap: 6px; padding: 4px 6px 6px; }
+#queued.on { display: flex; }
+.qchip {
+  display: flex; align-items: center; gap: 7px; max-width: 100%;
+  border: none; border-radius: 999px; background: var(--line); color: var(--dim);
+  font: inherit; font-size: 12.5px; padding: 6px 11px;
+}
+.qchip span {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60vw;
+}
+#send.stop { background: var(--warn); }
 
 /* What is about to be sent, before it is sent. Images as thumbnails, because
    the whole point of attaching one is that you can see which one it is. */
@@ -442,19 +478,14 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 }
 
 #text {
-  flex: 1; resize: none; max-height: 130px;
-  padding: 11px 15px; border-radius: 21px;
-  border: none; background: var(--key); color: var(--ink);
-  -webkit-backdrop-filter: blur(14px) saturate(170%);
-  backdrop-filter: blur(14px) saturate(170%);
-  box-shadow:
-    inset 0 1px 0 0 var(--rim-top),
-    inset 0 0 0 .5px var(--rim-line),
-    inset 0 -1px 0 0 var(--rim-bottom);
+  display: block; width: 100%; resize: none; max-height: 132px;
+  padding: 9px 12px 4px; border: none; background: none; color: var(--ink);
+  box-shadow: none;
   font-family: inherit;
   /* Not 15px: anything under 16 makes iOS zoom the page on focus. */
   font-size: 16px;
 }
+#text:focus { outline: none; }
 #send {
   position: relative; overflow: hidden;
   width: 44px; height: 44px; border: none; border-radius: 50%;
@@ -611,11 +642,16 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
   <div id="stream"></div>
 
   <form id="composer">
-    <div id="tray"></div>
-    <div id="entry">
-      <button class="icon" id="attach" type="button" title="Ekle">＋</button>
+    <div id="dock">
+      <div id="tray"></div>
+      <div id="queued"></div>
       <textarea id="text" rows="1" placeholder="Mesaj yaz…" enterkeyhint="send"></textarea>
-      <button id="send" type="submit" title="Gönder">↑</button>
+      <div id="controls">
+        <button class="icon" id="attach" type="button" title="Ekle">＋</button>
+        <button id="modelchip" type="button" title="Model">…</button>
+        <span class="fill"></span>
+        <button id="send" type="submit" title="Gönder">↑</button>
+      </div>
     </div>
     <input id="picker" type="file" multiple hidden>
   </form>
@@ -624,6 +660,6 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 <div id="veil"><div id="sheet"></div></div>
 <div id="popveil"><div id="pop"></div></div>
 
-<script src="app.js?v=25"></script>
+<script src="app.js?v=26"></script>
 </body>
 </html>

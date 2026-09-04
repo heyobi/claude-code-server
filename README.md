@@ -292,12 +292,29 @@ support `url()` in `backdrop-filter`
 which is the browser this is built for — it renders as nothing. Chasing it would
 have looked right on the development machine and wrong on the phone.
 
+### The composer
+
+One panel: what you are writing on top, what you are writing it with underneath
+— attach, the model it will go to, and send. Tapping the model name opens the
+picker, so the thing you most often want to change is one tap from where you are
+typing.
+
+Typing while a session is working is neither refused nor an interruption. The
+message waits in a visible queue and goes when the session comes free; the send
+button becomes a stop while it works, and stops the turn without ending the
+session. Both backends behave the same way, because both report readiness the
+same way — from the pane.
+
 ### The session list
 
 A session is a conversation, so the list shows what the conversation was about:
 the last thing said, when it was said, and which backend said it, newest first.
 That means reading each transcript, which would be slow done naively — a session
 running all day has megabytes of it — so only the tail is read.
+
+Sessions can be pinned, which keeps them above the rest; the pins live on the
+device, because which conversations matter is a property of whoever is holding
+the phone.
 
 Rows answer a tap with a small haptic where the browser allows one. Safari has
 never implemented the Vibration API, but it does give a switch control its own
@@ -326,7 +343,13 @@ the path, because a path is what a session can open. An image someone attached
 appears in their own message rather than being described in it.
 
 Whatever a session produces is on the machine, which is not the same as being
-reachable. The app browses the workspace and opens what it finds: images,
+reachable. The file view opens on what this conversation touched — paths it mentioned and
+files the executor wrote, that are really there, and nothing at all when there
+are none. A browser rooted at the workspace shows you everything on the machine,
+which is not what you want while reading one conversation; that view is still
+one tap away.
+
+The app browses the workspace and opens what it finds: images,
 audio and video play in the conversation, text and code open in a block, and a
 page or a PDF gets its own tab. Paths mentioned in an answer become buttons
 underneath it, so a generated file is one tap from the sentence that announced

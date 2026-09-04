@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v25';
+const BUILD = 'v26';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -205,13 +205,23 @@ function toBottom(force) {
   if (force || near) el.scrollTop = el.scrollHeight;
 }
 
+function paintModel() {
+  const row = known.sessions.find((s) => s.name === session) || {};
+  const chip = $('modelchip');
+  if (!chip) return;
+  chip.textContent = row.model
+    ? modelTitle(row.model)
+    : (row.profile === '-' || !row.profile ? 'Claude' : row.profile);
+}
+
 function setStatus(ready, profile) {
   const dot = document.querySelector('#sub .dot');
   dot.className = 'dot' + (ready === null ? ' off' : ready ? '' : ' busy');
   $('statusText').textContent =
     (profile && profile !== '-' ? profile + ' · ' : 'Claude · ') +
     (ready === null ? 'bağlanıyor…' : ready ? 'hazır' : 'yazıyor…');
-  $('send').disabled = ready === false;
+  // Never disabled: while it works the same button stops it.
+  $('send').disabled = false;
 }
 
 /* ----------------------------------------------------------- permissions */
@@ -257,6 +267,7 @@ function listen() {
   stream.addEventListener('status', (e) => {
     const s = JSON.parse(e.data);
     setStatus(s.ready, s.profile);
+    setBusy(!s.ready);
   });
   stream.addEventListener('permission', (e) => {
     const p = JSON.parse(e.data);
@@ -271,6 +282,7 @@ function listen() {
 
 async function refresh() {
   known = await api('/api/state');
+  paintModel();
   if (!known.sessions.length) { $('name').textContent = 'oturum yok'; return; }
   if (!known.sessions.some((s) => s.name === session)) {
     session = known.sessions[0].name;
@@ -287,11 +299,13 @@ async function openSession(name) {
   $('stream').innerHTML = '';
   $('name').textContent = name;
   setStatus(null, null);
+  paintModel();
   const data = await api('/api/history?session=' + encodeURIComponent(name));
   offset = data.offset;
   if (!data.turns.length) note('Bu oturum henüz konuşmadı.');
   data.turns.forEach(addTurn);
   setStatus(data.ready, data.profile);
+  setBusy(!data.ready);
   toBottom(true);
   listen();
 }
@@ -339,6 +353,19 @@ function button(parent, label, sub, on, active) {
   return b;
 }
 
+// Pinned sessions ride at the top. Kept on the device: which conversations
+// matter is a property of whoever is holding the phone.
+function pinned() {
+  try { return new Set(JSON.parse(localStorage.getItem('ccs.pins') || '[]')); }
+  catch { return new Set(); }
+}
+
+function togglePin(name) {
+  const pins = pinned();
+  pins.has(name) ? pins.delete(name) : pins.add(name);
+  try { localStorage.setItem('ccs.pins', JSON.stringify([...pins])); } catch {}
+}
+
 function whenish(at) {
   if (!at) return '';
   const gap = Date.now() / 1000 - at;
@@ -353,25 +380,54 @@ async function sessionSheet() {
   await refresh();
   // Newest first. A list of sessions is a list of conversations, and the one
   // you want is almost always the one you were just in.
-  const rows = [...known.sessions].sort((a, b) => (b.at || 0) - (a.at || 0));
+  const pins = pinned();
+  const byTime = (a, b) => (b.at || 0) - (a.at || 0);
+  const top = known.sessions.filter((s) => pins.has(s.name)).sort(byTime);
+  const rest = known.sessions.filter((s) => !pins.has(s.name)).sort(byTime);
   sheet('Oturumlar', (box) => {
+    if (top.length) {
+      const label = document.createElement('div');
+      label.className = 'sublabel';
+      label.textContent = 'Sabitlenmiş';
+      box.appendChild(label);
+      const pinList = group(box);
+      top.forEach((s) => chatRow(pinList, s, true));
+      const label2 = document.createElement('div');
+      label2.className = 'sublabel';
+      label2.textContent = 'Son kullanılan';
+      box.appendChild(label2);
+    }
     const list = group(box);
-    rows.forEach((s) => {
-      const row = button(list, '', null,
-        () => { closeSheet(); openSession(s.name); }, s.name === session);
-      row.classList.add('chatrow');
-      row.innerHTML =
-        '<span class="grow">' +
-          '<span class="ctop">' +
-            '<span class="cname">' + esc(s.name) + '</span>' +
-            '<span class="cwhen">' + esc(whenish(s.at)) + '</span>' +
-          '</span>' +
-          '<span class="cprev">' + esc(s.last || 'Henüz konuşmadı') + '</span>' +
-          '<span class="ctag">' + esc(s.profile === '-' ? 'Claude' : s.profile) +
-            (s.ready ? '' : ' · çalışıyor') + '</span>' +
-        '</span>' + (s.name === session ? '<span class="ctick">✓</span>' : '');
-    });
+    rest.forEach((s) => chatRow(list, s, false));
   });
+}
+
+function chatRow(list, s, isPinned) {
+  {
+    const row = button(list, '', null,
+      () => { closeSheet(); openSession(s.name); }, s.name === session);
+    row.classList.add('chatrow');
+    row.innerHTML =
+      '<span class="grow">' +
+        '<span class="ctop">' +
+          '<span class="cname">' + esc(s.name) + '</span>' +
+          '<span class="cwhen">' + esc(whenish(s.at)) + '</span>' +
+        '</span>' +
+        '<span class="cprev">' + esc(s.last || 'Henüz konuşmadı') + '</span>' +
+        '<span class="ctag">' + esc(s.profile === '-' ? 'Claude' : s.profile) +
+          (s.ready ? '' : ' · çalışıyor') + '</span>' +
+      '</span>' + (s.name === session ? '<span class="ctick">✓</span>' : '');
+    const pin = document.createElement('span');
+    pin.className = 'cpin' + (isPinned ? ' on' : '');
+    pin.textContent = '📌';
+    pin.onclick = (e) => {
+      e.stopPropagation();
+      tap();
+      togglePin(s.name);
+      sessionSheet();
+    };
+    row.appendChild(pin);
+  }
 }
 
 /* ----------------------------------------------------------------- menu */
@@ -540,6 +596,53 @@ const buzzer = (() => {
 
 function tap() {
   try { buzzer.click(); } catch {}
+}
+
+/* ---------------------------------------------------------------- queue */
+
+// Typing while it works should not be refused, and should not interrupt what
+// is running either. It waits, visibly, and goes when the session is free.
+let queue = [];
+let busy = false;
+
+function paintQueue() {
+  const box = $('queued');
+  box.innerHTML = '';
+  box.classList.toggle('on', queue.length > 0);
+  queue.forEach((body, index) => {
+    const chip = document.createElement('button');
+    chip.className = 'qchip';
+    chip.type = 'button';
+    chip.innerHTML = '<span>' + esc(body.split('\n')[0].slice(0, 60)) + '</span>✕';
+    chip.onclick = () => { queue.splice(index, 1); paintQueue(); };
+    box.appendChild(chip);
+  });
+}
+
+function paintSend() {
+  const send = $('send');
+  send.classList.toggle('stop', busy);
+  send.textContent = busy ? '■' : '↑';
+  send.title = busy ? 'Durdur' : 'Gönder';
+}
+
+async function drain() {
+  if (busy || !queue.length || !session) return;
+  const body = queue.shift();
+  paintQueue();
+  try {
+    await post('/api/message', { session, text: body });
+  } catch {
+    queue.unshift(body);
+    paintQueue();
+  }
+}
+
+function setBusy(state) {
+  if (busy === state) return;
+  busy = state;
+  paintSend();
+  if (!busy) setTimeout(drain, 400);
 }
 
 /* ------------------------------------------------------------ attachments */
@@ -949,24 +1052,31 @@ function openFile(path, kind) {
   toBottom(true);
 }
 
-async function filesSheet(dir) {
-  const data = await api('/api/files?dir=' + encodeURIComponent(dir || ''));
+// Two views: what this conversation touched, and the workspace. The first is
+// what you almost always want, so it is the one that opens.
+async function filesSheet(dir, all) {
+  const query = all ? '/api/files?dir=' + encodeURIComponent(dir || '')
+                    : '/api/files?session=' + encodeURIComponent(session);
+  const data = await api(query);
   const here = data.dir || '';
-  sheet('📁 ' + (here || data.root), (box) => {
-    if (here) {
+  sheet(all ? '📁 ' + (here || data.root) : '📎 Bu oturumun dosyaları', (box) => {
+    if (all && here) {
       const up = here.split('/').slice(0, -1).join('/');
-      button(box, '◀ Yukari', null, () => filesSheet(up));
+      button(box, '◀ Yukarı', null, () => filesSheet(up, true));
     }
-    if (!data.entries.length) button(box, '(bos klasor)', null, () => {});
+    if (!data.entries.length) {
+      button(box, all ? '(boş klasör)' : 'Bu oturumda dosya yok', null, () => {});
+    }
     const list = data.entries.length ? group(box) : box;
     data.entries.forEach((entry) => {
       const size = entry.dir ? '' : humanSize(entry.size);
       button(list, (ICON[entry.kind] || '📄') + ' ' + entry.name, size, () => {
-        if (entry.dir) { filesSheet(entry.path); return; }
+        if (entry.dir) { filesSheet(entry.path, true); return; }
         closeSheet();
         openFile(entry.path, entry.kind);
       });
     });
+    if (!all) button(box, '🗄 Tüm çalışma dizini', null, () => filesSheet('', true));
   });
 }
 
@@ -1050,6 +1160,7 @@ async function boot() {
   } catch {
     return;                       // gate() already ran on 401
   }
+  paintModel();
   document.title = known.app || document.title;
   const brand = $('brand');
   if (brand && known.app) brand.textContent = known.app;
@@ -1081,7 +1192,8 @@ text.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('composer').requestSubmit(); }
 });
 
-$('attach').onclick = () => $('picker').click();
+$('attach').onclick = () => { tap(); $('picker').click(); };
+$('modelchip').onclick = () => { tap(); modelSheet(); };
 $('picker').onchange = async (e) => {
   await takeFiles([...e.target.files]);
   e.target.value = '';
@@ -1089,8 +1201,15 @@ $('picker').onchange = async (e) => {
 
 $('composer').onsubmit = async (e) => {
   e.preventDefault();
+  tap();
   const ready = tray.filter((x) => x.path);
   const typed = text.value.trim();
+  // While it is working the button is a stop, unless you have something to say
+  // — then it queues rather than interrupting.
+  if (busy && !typed && !ready.length) {
+    await post('/api/session', { action: 'interrupt', session });
+    return;
+  }
   if ((!typed && !ready.length) || !session) return;
   // The session reads files by path, so that is what a message carries.
   const paths = ready.map((x) => x.path);
@@ -1101,6 +1220,12 @@ $('composer').onsubmit = async (e) => {
   text.style.height = 'auto';
   tray = [];
   paintTray();
+  if (busy) {
+    queue.push(body);
+    paintQueue();
+    toBottom(true);
+    return;
+  }
   try {
     await post('/api/message', { session, text: body });
   } catch {
