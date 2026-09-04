@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v29';
+const BUILD = 'v30';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -385,24 +385,62 @@ async function sessionSheet() {
   // you want is almost always the one you were just in.
   const pins = pinned();
   const byTime = (a, b) => (b.at || 0) - (a.at || 0);
-  const top = known.sessions.filter((s) => pins.has(s.name)).sort(byTime);
-  const rest = known.sessions.filter((s) => !pins.has(s.name)).sort(byTime);
+  const here = known.sessions.filter((s) => !s.archived);
+  const away = known.sessions.filter((s) => s.archived).sort(byTime);
+  const top = here.filter((s) => pins.has(s.name)).sort(byTime);
+  const rest = here.filter((s) => !pins.has(s.name)).sort(byTime);
   sheet('Oturumlar', (box) => {
     if (top.length) {
-      const label = document.createElement('div');
-      label.className = 'sublabel';
-      label.textContent = 'Sabitlenmiş';
-      box.appendChild(label);
+      label(box, 'Sabitlenmiş');
       const pinList = group(box);
       top.forEach((s) => chatRow(pinList, s, true));
-      const label2 = document.createElement('div');
-      label2.className = 'sublabel';
-      label2.textContent = 'Son kullanılan';
-      box.appendChild(label2);
+      label(box, 'Son kullanılan');
     }
     const list = group(box);
     rest.forEach((s) => chatRow(list, s, false));
+    if (away.length) {
+      button(box, '🗄 Arşiv', away.length + ' oturum', () => archiveSheet());
+    }
   });
+}
+
+function label(box, words) {
+  const el = document.createElement('div');
+  el.className = 'sublabel';
+  el.textContent = words;
+  box.appendChild(el);
+}
+
+// Archived conversations are still running conversations — the tmux session and
+// its process are untouched, which is the one thing the Claude apps' archive
+// does not tell you. So the sheet says it, and closing stays one tap away.
+async function archiveSheet() {
+  await refresh();
+  const away = known.sessions.filter((s) => s.archived)
+    .sort((a, b) => (b.at || 0) - (a.at || 0));
+  sheet('🗄 Arşiv', (box) => {
+    const note = document.createElement('p');
+    note.className = 'note';
+    note.textContent = 'Arşiv listeyi toparlar, oturumu kapatmaz — hepsi ' +
+                       'çalışmaya devam ediyor.';
+    box.appendChild(note);
+    if (!away.length) button(box, 'Arşiv boş', null, () => {});
+    const list = away.length ? group(box) : box;
+    away.forEach((s) => chatRow(list, s, false));
+    button(box, '◀ Oturumlar', null, () => sessionSheet());
+  });
+}
+
+async function setArchived(name, state) {
+  await post('/api/session', { action: state ? 'archive' : 'unarchive', session: name });
+  known = await api('/api/state');
+  // Reading an archived conversation is what unarchives it in most apps; here
+  // it would put back the thing you just put away, so move on instead.
+  if (state && name === session) {
+    const next = known.sessions.filter((s) => !s.archived && s.name !== name)
+      .sort((a, b) => (b.at || 0) - (a.at || 0))[0];
+    if (next) openSession(next.name);
+  }
 }
 
 function chatRow(list, s, isPinned) {
@@ -430,6 +468,16 @@ function chatRow(list, s, isPinned) {
       sessionSheet();
     };
     row.appendChild(pin);
+    const box = document.createElement('span');
+    box.className = 'cpin' + (s.archived ? ' on' : '');
+    box.textContent = '🗄';
+    box.onclick = async (e) => {
+      e.stopPropagation();
+      tap();
+      await setArchived(s.name, !s.archived);
+      s.archived ? archiveSheet() : sessionSheet();
+    };
+    row.appendChild(box);
   }
 }
 
@@ -456,6 +504,10 @@ function menuSheet() {
     if (r.session) openSession(r.session);
   });
   add('✏️ Yeniden adlandır', () => renameSheet());
+  const put = (known.sessions.find((s) => s.name === session) || {}).archived;
+  add(put ? '🗄 Arşivden çıkar' : '🗄 Arşivle',
+      () => setArchived(session, !put),
+      put ? null : 'Listeden kalkar, çalışmaya devam eder');
   // Placed now so it keeps its position; the state arrives a moment later.
   const bell = add('🔔 Bildirim', () => togglePush(), 'bakılıyor…');
   pushState().then((state) => {
@@ -1288,9 +1340,13 @@ function fitViewport() {
   // document out of the way of the keyboard. Put it back and measure.
   if (window.scrollY) window.scrollTo(0, 0);
   const covered = Math.max(0, window.innerHeight - vv.height);
-  root.style.setProperty('--vh', vv.height + 'px');
-  root.style.setProperty('--vtop', vv.offsetTop + 'px');
   const open = covered > 80;             // a keyboard, not a browser chrome nudge
+  // With no keyboard the shell fills the window. Some browsers report a visual
+  // viewport shorter than the window for their own furniture, and believing
+  // them leaves a strip of nothing under the composer.
+  const height = open ? vv.height : Math.max(vv.height, window.innerHeight - vv.offsetTop);
+  root.style.setProperty('--vh', height + 'px');
+  root.style.setProperty('--vtop', vv.offsetTop + 'px');
   if (open !== root.classList.contains('kb')) {
     root.classList.toggle('kb', open);
     // Whatever you were reading should still be the thing in front of you.

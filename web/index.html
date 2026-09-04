@@ -39,8 +39,12 @@
   --veilglass: rgba(255, 255, 255, .26);
   /* The page colour, thinned. Used to fade the conversation out under the
      bars rather than cutting it off with an edge. */
-  --veil: rgba(246, 247, 248, .93);
-  --veil-soft: rgba(246, 247, 248, .40);
+  /* The page colour at four weights. A two-stop fade has a visible shoulder
+     where the ramp begins; the stops in between are what make it a fade. */
+  --veil: rgba(246, 247, 248, .90);
+  --veil-b: rgba(246, 247, 248, .62);
+  --veil-c: rgba(246, 247, 248, .30);
+  --veil-d: rgba(246, 247, 248, .10);
   --radius: 14px;
 }
 @media (prefers-color-scheme: dark) {
@@ -66,8 +70,10 @@
     --cast-far: rgba(0, 0, 0, .35);
     --solid: rgba(32, 37, 42, .95);
     --veilglass: rgba(20, 24, 28, .28);
-    --veil: rgba(17, 20, 23, .93);
-    --veil-soft: rgba(17, 20, 23, .40);
+    --veil: rgba(17, 20, 23, .90);
+    --veil-b: rgba(17, 20, 23, .62);
+    --veil-c: rgba(17, 20, 23, .30);
+    --veil-d: rgba(17, 20, 23, .10);
   }
 }
 * {
@@ -95,11 +101,10 @@ body {
   --vh: 100%; --vtop: 0px;
   --pad-top: env(safe-area-inset-top);
   --pad-bottom: env(safe-area-inset-bottom);
-  /* How far the composer stays off the floor. A fraction of the inset and
-     nothing else: a constant added here is a guess about a device, and it was
-     what kept the panel hovering. With no inset — a keyboard covering it, a
-     phone without an indicator — the panel simply rests on the edge. */
-  --dock-floor: calc(var(--pad-bottom) * .2);
+  /* The composer rests on the floor of the visible area. Every version of
+     this that kept some of the home indicator's inset read as hovering, and
+     the indicator is drawn over content everywhere else on the system too. */
+  --dock-floor: 0px;
 }
 /* The keyboard is covering the home indicator, so nothing needs to be held
    clear of it. Same at the top: the shell has already been moved down. */
@@ -120,7 +125,7 @@ html.kb { --pad-top: 0px; --pad-bottom: 0px; }
    a line across the top is what made it read as a lid over the page. */
 header {
   position: absolute; top: 0; left: 0; right: 0; z-index: 5;
-  padding: calc(var(--pad-top) + 8px) 10px 30px;
+  padding: calc(var(--pad-top) + 8px) 10px 62px;
   display: flex; align-items: center; gap: 10px;
   /* Only the controls take touches; the rest is conversation. */
   pointer-events: none;
@@ -136,12 +141,14 @@ header::before {
   -webkit-backdrop-filter: blur(14px) saturate(160%);
   backdrop-filter: blur(14px) saturate(160%);
   -webkit-mask-image: linear-gradient(180deg, #000 0%,
-                      #000 calc(var(--pad-top) + 50px),
-                      rgba(0, 0, 0, .4) calc(var(--pad-top) + 66px),
+                      #000 calc(var(--pad-top) + 52px),
+                      rgba(0, 0, 0, .66) calc(var(--pad-top) + 70px),
+                      rgba(0, 0, 0, .32) calc(var(--pad-top) + 90px),
                       transparent 100%);
   mask-image: linear-gradient(180deg, #000 0%,
-              #000 calc(var(--pad-top) + 50px),
-              rgba(0, 0, 0, .4) calc(var(--pad-top) + 66px),
+              #000 calc(var(--pad-top) + 52px),
+              rgba(0, 0, 0, .66) calc(var(--pad-top) + 70px),
+              rgba(0, 0, 0, .32) calc(var(--pad-top) + 90px),
               transparent 100%);
 }
 header::after {
@@ -150,8 +157,10 @@ header::after {
      is as tall as the status bar makes it, and a percentage would put the ramp
      across the title on one device and below it on another. */
   background: linear-gradient(180deg, var(--veil) 0%,
-              var(--veil) calc(var(--pad-top) + 50px),
-              var(--veil-soft) calc(var(--pad-top) + 66px),
+              var(--veil) calc(var(--pad-top) + 52px),
+              var(--veil-b) calc(var(--pad-top) + 68px),
+              var(--veil-c) calc(var(--pad-top) + 86px),
+              var(--veil-d) calc(var(--pad-top) + 102px),
               transparent 100%);
 }
 #who { flex: 1; min-width: 0; text-align: center; }
@@ -503,7 +512,8 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
   mask-image: linear-gradient(0deg, #000 0%, #000 58%, transparent 100%);
 }
 #composer::after {
-  background: linear-gradient(0deg, var(--veil) 0%, var(--veil) 56%, transparent 100%);
+  background: linear-gradient(0deg, var(--veil) 0%, var(--veil) 62%,
+              var(--veil-c) 84%, transparent 100%);
 }
 /* One panel: what you are writing on top, what you are writing it with
    underneath. The bar behind it is only a backdrop. */
@@ -768,6 +778,6 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 <div id="veil"><div id="sheet"></div></div>
 <div id="popveil"><div id="pop"></div></div>
 
-<script src="app.js?v=29"></script>
+<script src="app.js?v=30"></script>
 </body>
 </html>

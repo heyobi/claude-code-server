@@ -29,7 +29,8 @@ close_one() {
   tmux kill-session -t "$name" 2>/dev/null && echo "Stopped '$name'."
   # Forgetting the record is the important half: without it the next reboot
   # would resume this conversation again.
-  rm -f "$CCS_POOLDIR/${name}.uuid" "$CCS_POOLDIR/${name}.profile"
+  rm -f "$CCS_POOLDIR/${name}.uuid" "$CCS_POOLDIR/${name}.profile" \
+        "$CCS_POOLDIR/${name}.archived"
   rm -f "$CCS_MARKDIR/${name}"
   ccs_log "closed: $name"
 
@@ -62,7 +63,8 @@ case "${1:-}" in
       exit 1
     fi
     transcript=$(ccs_transcript "$self" 2>/dev/null) || transcript=""
-    rm -f "$CCS_POOLDIR/${self}.uuid" "$CCS_POOLDIR/${self}.profile"           "$CCS_MARKDIR/${self}"
+    rm -f "$CCS_POOLDIR/${self}.uuid" "$CCS_POOLDIR/${self}.profile" \
+          "$CCS_POOLDIR/${self}.archived" "$CCS_MARKDIR/${self}"
     ccs_log "closing self: $self"
     setsid nohup sh -c "sleep 5; tmux kill-session -t '$self'" >/dev/null 2>&1 &
     echo "Closing '$self' in a few seconds. It will not come back after a reboot."

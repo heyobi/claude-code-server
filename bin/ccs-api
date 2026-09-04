@@ -302,12 +302,14 @@ def describe(name):
     """
     ready = pane_ready(name)
     path = transcript_of(name)
+    archived = os.path.exists(os.path.join(POOLDIR, name + ".archived"))
     said, at = last_words(path) if path else ("", 0)
     profile = session_profile(name)
     row = {
         "name": name,
         "profile": profile,
         "model": session_model(profile),
+        "archived": archived,
         "ready": ready,
         "last": said,
         "at": at,
@@ -512,6 +514,11 @@ def notifier():
             live = ccs_sessions()
             KNOWN_SESSIONS.intersection_update(live)
             for name in live:
+                if os.path.exists(os.path.join(POOLDIR, name + ".archived")):
+                    # Put away on purpose. Announcing it defeats the point.
+                    KNOWN_SESSIONS.add(name)
+                    SEEN[name] = os.path.getsize(transcript_of(name) or os.devnull)
+                    continue
                 if name not in KNOWN_SESSIONS:
                     KNOWN_SESSIONS.add(name)
                     # Not on the first pass: everything is new when we start.
@@ -843,13 +850,29 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(400, {"error": "bad name"})
             # The record is the id and the backend; both move with the name or
             # the next session to be called this inherits them.
-            for part in ("uuid", "profile"):
+            for part in ("uuid", "profile", "archived"):
                 old = os.path.join(POOLDIR, "{}.{}".format(name, part))
                 if os.path.exists(old):
                     os.replace(old, os.path.join(POOLDIR, "{}.{}".format(fresh, part)))
             tmux("rename-session", "-t", name, fresh)
             _CACHE.pop("sessions", None)
             return self.reply(200, {"ok": True, "session": fresh})
+        if action in ("archive", "unarchive"):
+            # Archiving tidies the list and nothing else. The tmux session and
+            # its process keep running, which is why the sheet says so and
+            # keeps closing one tap away.
+            if name not in ccs_sessions():
+                return self.reply(404, {"error": "no such session"})
+            mark = os.path.join(POOLDIR, name + ".archived")
+            if action == "archive":
+                with open(mark, "w", encoding="utf-8") as handle:
+                    handle.write(str(int(time.time())) + chr(10))
+            else:
+                try:
+                    os.remove(mark)
+                except OSError:
+                    pass
+            return self.reply(200, {"ok": True})
         if action == "close":
             if name not in ccs_sessions():
                 return self.reply(404, {"error": "no such session"})

@@ -105,6 +105,15 @@ a reboot the pool resumes the conversation, so it reappears.
 the record, so the restore pass leaves it alone. The transcript stays on disk,
 and `ccs-resume` can reopen it whenever you want.
 
+The web app has an archive anyway, because a list you cannot tidy stops being
+readable — but it says what it is. Archived conversations move behind one row
+at the bottom of the list, the sheet that holds them states that they are still
+running, and closing is one tap further. The marker is a `.archived` file
+beside the session's other records, so it survives a restart, moves with a
+rename, and goes when the session is closed. Archived sessions also stop
+sending notifications: putting a conversation away and then being buzzed by it
+is the one thing an archive must not do.
+
 You do not need a shell for this. The installer drops a `CLAUDE.md` in the
 workspace telling the assistant to run `ccs-close --self` when you ask it to
 close, so from your phone you can just say "close this session" and it does.
@@ -304,7 +313,9 @@ off, it just does it without the blur.
 
 The ramp is measured in pixels from the top, not in percentages of the header.
 The header is as tall as the status bar makes it, so a percentage puts the fade
-across the title on one device and below it on another.
+across the title on one device and below it on another. It runs over some fifty
+of them through four stops: a two-stop fade has a visible shoulder where the
+ramp begins, and the shoulder is the thing that still reads as an edge.
 
 ### The composer
 
@@ -314,11 +325,10 @@ picker, so the thing you most often want to change is one tap from where you are
 typing.
 
 The model sits in a pill, not as plain text beside the attach button — a label
-next to a control reads as a caption, and nobody taps a caption. The panel's
-distance from the floor is a fraction of the safe-area inset and nothing else:
-every constant added there was a guess about one device, and each one left the
-composer hovering somewhere. With no inset — a keyboard covering it, a phone
-without an indicator — it simply rests on the edge.
+next to a control reads as a caption, and nobody taps a caption. The panel rests on the
+floor of the visible area, with no clearance at all. Every version of this that
+kept some of the home indicator's inset read as hovering, and the system draws
+that indicator over content everywhere else too.
 
 Nothing traps you behind the keyboard. Dragging the conversation dismisses it,
 so does tapping anything in it that is not a control, and the layout puts the
