@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v27';
+const BUILD = 'v28';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -203,15 +203,19 @@ function toBottom(force) {
   const el = $('stream');
   const near = el.scrollHeight - el.scrollTop - el.clientHeight < 250;
   if (force || near) el.scrollTop = el.scrollHeight;
+  // Appending does not fire a scroll event, so the button has to be told.
+  paintJump();
 }
 
 function paintModel() {
   const row = known.sessions.find((s) => s.name === session) || {};
   const chip = $('modelchip');
   if (!chip) return;
-  chip.textContent = row.model
+  const label = row.model
     ? modelTitle(row.model)
     : (row.profile === '-' || !row.profile ? 'Claude' : row.profile);
+  chip.innerHTML = '<span class="mname">' + esc(label) + '</span>' +
+                   '<span class="mcaret">▼</span>';
 }
 
 function setStatus(ready, profile) {
@@ -1233,6 +1237,42 @@ $('composer').onsubmit = async (e) => {
   }
   toBottom(true);
 };
+
+/* -------------------------------------------------------------- the way back */
+
+// Far enough up that scrolling back down would be a chore. Anything less and
+// the button is in the way of the thing you are reading.
+function paintJump() {
+  const el = $('stream');
+  const away = el.scrollHeight - el.scrollTop - el.clientHeight;
+  $('jump').classList.toggle('on', away > 400);
+}
+
+$('stream').addEventListener('scroll', paintJump, { passive: true });
+// Straight there, not a glide: smooth scrolling is silently ignored on this
+// element in more than one browser, and a button that sometimes does nothing
+// is worse than one that does not animate.
+$('jump').onclick = () => {
+  tap();
+  toBottom(true);
+};
+
+// Nothing should ever leave you stuck behind the keyboard: dragging the
+// conversation puts it away, and so does tapping anywhere that is not a
+// control. Twelve pixels so a tap that wobbles is still a tap.
+let dragFrom = null;
+$('stream').addEventListener('touchstart', (e) => {
+  dragFrom = e.touches[0].clientY;
+}, { passive: true });
+$('stream').addEventListener('touchmove', (e) => {
+  if (dragFrom === null || document.activeElement !== text) return;
+  if (Math.abs(e.touches[0].clientY - dragFrom) > 12) text.blur();
+}, { passive: true });
+$('stream').addEventListener('click', (e) => {
+  if (document.activeElement === text && !e.target.closest('button, a, input, textarea')) {
+    text.blur();
+  }
+});
 
 /* ------------------------------------------------------------- viewport */
 

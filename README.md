@@ -309,6 +309,21 @@ One panel: what you are writing on top, what you are writing it with underneath
 picker, so the thing you most often want to change is one tap from where you are
 typing.
 
+The model sits in a pill with a chevron, not as plain text beside the attach
+button — a label next to a control reads as a caption, and nobody taps a
+caption. The panel rests about a third of the home indicator's strip off the
+floor rather than clearing all of it: the indicator is a few points tall at the
+very bottom, and honouring the whole inset left the composer visibly hovering.
+
+Nothing traps you behind the keyboard. Dragging the conversation dismisses it,
+so does tapping anything in it that is not a control, and the layout puts the
+composer on the keyboard's top edge rather than somewhere near it.
+
+Scrolled back through a long answer, a round button appears over the composer
+and takes you to the bottom. It jumps rather than glides: smooth scrolling is
+silently ignored on that element in more than one browser, and a button that
+sometimes does nothing is worse than one that does not animate.
+
 Typing while a session is working is neither refused nor an interruption. The
 message waits in a visible queue and goes when the session comes free; the send
 button becomes a stop while it works, and stops the turn without ending the

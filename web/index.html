@@ -93,6 +93,10 @@ body {
   --vh: 100%; --vtop: 0px;
   --pad-top: env(safe-area-inset-top);
   --pad-bottom: env(safe-area-inset-bottom);
+  /* How far the composer stays off the floor. Most of the home indicator's
+     strip is empty — the bar itself is a few points tall and sits at the very
+     bottom — so clearing all 34 of them left the panel visibly hovering. */
+  --dock-floor: calc(var(--pad-bottom) * .3 + 6px);
 }
 /* The keyboard is covering the home indicator, so nothing needs to be held
    clear of it. Same at the top: the shell has already been moved down. */
@@ -180,7 +184,7 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
   /* Narrower gutters: the text was being squeezed into the middle of the
      screen for no reason. */
   padding: calc(var(--pad-top) + var(--bar-top)) 10px
-           calc(var(--pad-bottom) + var(--bar-bottom));
+           calc(var(--dock-floor) + var(--bar-bottom));
 }
 /* What you said is a message and sits in one. What the model says is the page
    itself — an answer arriving in a box reads as finished, and it is being
@@ -448,6 +452,24 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 .bubble audio { width: 100%; }
 .turn.preview-wide { max-width: 100%; }
 
+/* Reading back through a long answer, the way out is one tap: the same round
+   control, over the composer, showing up only once you are far enough away
+   that scrolling back would be work. */
+#jump {
+  position: absolute; z-index: 4; left: 50%;
+  /* Clear of the composer's fade, or it looks like part of it. */
+  bottom: calc(var(--dock-floor) + var(--bar-bottom) + 6px);
+  width: 40px; height: 40px; font-size: 18px;
+  /* Opaque, unlike the rest: it floats over the conversation with nothing
+     behind it to frost, and a translucent disc there just disappears. */
+  background: var(--solid);
+  opacity: 0; pointer-events: none;
+  transform: translateX(-50%) translateY(8px);
+  transition: opacity .18s ease, transform .18s ease;
+}
+#jump.on { opacity: 1; pointer-events: auto; transform: translateX(-50%); }
+#jump:active { transform: translateX(-50%) scale(.9); }
+
 /* ---------------------------------------------------------------- composer */
 /* Sits on the floor of the visible area — the keyboard's top edge when there
    is one, the home indicator when there is not. The fade under it is the
@@ -455,7 +477,7 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 #composer {
   position: absolute; bottom: 0; left: 0; right: 0; z-index: 5;
   display: block;
-  padding: 8px 10px calc(var(--pad-bottom) + 6px);
+  padding: 8px 10px var(--dock-floor);
 }
 #composer::before, #composer::after {
   content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
@@ -483,13 +505,25 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 #controls { display: flex; align-items: center; gap: 6px; padding: 2px 2px 0; }
 #controls .fill { flex: 1; }
 #attach { width: 38px; height: 38px; font-size: 21px; line-height: 1; }
+/* Plain text next to a round button reads as a label, not a control. Same
+   glass as the rest, in a pill, with the chevron that says it opens. */
 #modelchip {
-  border: none; background: none; color: var(--dim);
-  font: inherit; font-size: 13.5px; padding: 8px 12px; border-radius: 999px;
-  max-width: 46vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  min-height: 38px;
+  display: inline-flex; align-items: center; gap: 5px;
+  border: none; background: var(--key); color: var(--ink);
+  font: inherit; font-size: 13.5px; padding: 0 12px; border-radius: 999px;
+  height: 38px; max-width: 46vw;
+  -webkit-backdrop-filter: blur(16px) saturate(170%);
+  backdrop-filter: blur(16px) saturate(170%);
+  box-shadow:
+    inset 0 1px 0 0 var(--rim-top),
+    inset 0 -1px 0 0 var(--rim-bottom),
+    inset 0 0 0 .5px var(--rim-line),
+    0 1px 2px var(--cast-near);
+  transition: transform .14s ease, filter .14s ease;
 }
-#modelchip:active { background: var(--line); }
+#modelchip .mname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#modelchip .mcaret { font-size: 10px; opacity: .5; flex: none; }
+#modelchip:active { transform: scale(.94); filter: brightness(.94); }
 
 /* Messages typed while it was busy, waiting their turn. */
 #queued { display: none; flex-wrap: wrap; gap: 6px; padding: 4px 6px 6px; }
@@ -700,6 +734,7 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
   </header>
 
   <div id="stream"></div>
+  <button class="icon" id="jump" type="button" title="En alta in">↓</button>
 
   <form id="composer">
     <div id="dock">
@@ -720,6 +755,6 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 <div id="veil"><div id="sheet"></div></div>
 <div id="popveil"><div id="pop"></div></div>
 
-<script src="app.js?v=27"></script>
+<script src="app.js?v=28"></script>
 </body>
 </html>
