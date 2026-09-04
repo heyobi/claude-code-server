@@ -1,0 +1,11 @@
+[Unit]
+Description=Keep an idle Claude Code session ready
+Documentation=https://github.com/heyobi/claude-code-server
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+Unit=claude-code-server-check.service
+
+[Install]
+WantedBy=timers.target

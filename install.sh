@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Install claude-code-server for the current user.
+#
+#   ./install.sh
+#
+# Installs into ~/.local/share/claude-code-server, links ccs-new and ccs-list
+# into ~/.local/bin, writes a default config, enables the systemd user units and
+# turns on lingering so the pool survives logout and reboot.
+#
+# Nothing here needs root except `loginctl enable-linger`, which the script asks
+# for explicitly. Re-running it is safe.
+set -euo pipefail
+
+SRC="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+DEST="$HOME/.local/share/claude-code-server"
+BINDIR="$HOME/.local/bin"
+UNITDIR="$HOME/.config/systemd/user"
+CONFDIR="$HOME/.config/claude-code-server"
+
+say() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m!!\033[0m %s\n' "$*"; }
+die() { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
+
+# ---------------------------------------------------------------- checks ----
+command -v tmux    >/dev/null || die "tmux is not installed (apt install tmux)"
+command -v python3 >/dev/null || die "python3 is not installed"
+command -v claude  >/dev/null || die "the claude CLI is not on PATH; install Claude Code first"
+command -v systemctl >/dev/null || die "this installer targets systemd systems"
+
+# --------------------------------------------------------------- install ----
+say "Installing to $DEST"
+mkdir -p "$DEST" "$BINDIR" "$UNITDIR" "$CONFDIR"
+rm -rf "$DEST/bin"
+cp -r "$SRC/bin" "$DEST/bin"
+chmod +x "$DEST"/bin/*
+
+ln -sf "$DEST/bin/ccs-new"  "$BINDIR/ccs-new"
+ln -sf "$DEST/bin/ccs-list" "$BINDIR/ccs-list"
+say "Linked ccs-new and ccs-list into $BINDIR"
+
+case ":$PATH:" in
+  *":$BINDIR:"*) ;;
+  *) warn "$BINDIR is not on your PATH; add it to your shell profile" ;;
+esac
+
+# ---------------------------------------------------------------- config ----
+if [ -f "$CONFDIR/config" ]; then
+  say "Keeping existing config at $CONFDIR/config"
+else
+  cp "$SRC/config.example" "$CONFDIR/config"
+  sed -i "s|^CCS_PREFIX=.*|CCS_PREFIX=$(hostname -s)|" "$CONFDIR/config"
+  sed -i "s|^CCS_WORKDIR=.*|CCS_WORKDIR=$HOME/workspace|" "$CONFDIR/config"
+  say "Wrote default config to $CONFDIR/config"
+fi
+
+# shellcheck source=/dev/null
+. "$CONFDIR/config"
+mkdir -p "$CCS_WORKDIR"
+
+# ---------------------------------------------------------------- systemd ---
+cp "$SRC/systemd/claude-code-server.service"       "$UNITDIR/"
+cp "$SRC/systemd/claude-code-server-check.service" "$UNITDIR/"
+cp "$SRC/systemd/claude-code-server.timer"         "$UNITDIR/"
+systemctl --user daemon-reload
+systemctl --user enable claude-code-server.service claude-code-server.timer >/dev/null
+systemctl --user start  claude-code-server.timer
+say "Enabled systemd user units"
+
+if [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" != "yes" ]; then
+  say "Enabling lingering so sessions survive logout and reboot (needs sudo)"
+  sudo loginctl enable-linger "$USER"
+fi
+
+# ------------------------------------------------------------------ tmux ----
+if ! grep -q 'claude-code-server' "$HOME/.tmux.conf" 2>/dev/null; then
+  cat "$SRC/tmux.conf.snippet" >> "$HOME/.tmux.conf"
+  say "Appended tmux settings to ~/.tmux.conf"
+  tmux source-file "$HOME/.tmux.conf" 2>/dev/null || true
+fi
+
+# ------------------------------------------------------------------ done ----
+cat <<EOF
+
+Installed.
+
+  workspace : $CCS_WORKDIR
+  prefix    : $CCS_PREFIX
+  config    : $CONFDIR/config
+
+One manual step is left. Claude Code asks you to trust a working directory the
+first time it opens one, and no script can answer that for you:
+
+  cd $CCS_WORKDIR && claude
+
+Choose "Yes, I trust this folder", then leave with Ctrl+B then D, or /exit.
+After that the pool starts sessions unattended.
+
+  ccs-list            show sessions and where to open them
+  ccs-new <topic>     start a named session
+
+EOF

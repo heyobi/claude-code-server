@@ -1,0 +1,13 @@
+[Unit]
+Description=Claude Code Remote Control session pool
+Documentation=https://github.com/heyobi/claude-code-server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=%h/.local/share/claude-code-server/bin/ccs-pool.sh
+
+[Install]
+WantedBy=default.target

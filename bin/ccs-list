@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Show every managed session, whether it is idle, and where to open it.
+set -uo pipefail
+
+CCS_BIN="$(dirname "$(readlink -f "$0")")"
+# shellcheck source=ccs-common.sh
+. "$CCS_BIN/ccs-common.sh"
+
+printf '%-40s %-14s %s\n' "SESSION" "STATE" "OPEN AT"
+printf '%-40s %-14s %s\n' \
+  "----------------------------------------" \
+  "--------------" \
+  "---------------------------------------------"
+
+found=0
+for session in $(ccs_sessions); do
+  found=1
+  transcript=$(ccs_transcript "$session") || transcript=""
+
+  if [ -z "$transcript" ]; then
+    printf '%-40s %-14s %s\n' "$session" "starting" "..."
+    continue
+  fi
+
+  messages=$(ccs_usercount "$transcript")
+  link=$(ccs_link "$transcript" || echo "...")
+
+  if [ "$messages" -eq 0 ]; then
+    state="idle"
+  else
+    state="in use ($messages)"
+  fi
+
+  printf '%-40s %-14s %s\n' "$session" "$state" "$link"
+done
+
+if [ "$found" -eq 0 ]; then
+  echo "(no sessions; the pool timer will start one within a couple of minutes)"
+fi

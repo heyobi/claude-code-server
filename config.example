@@ -1,0 +1,31 @@
+# claude-code-server configuration
+# Installed to ~/.config/claude-code-server/config
+
+# Session name prefix. Sessions appear in the Claude apps as
+# <prefix>, <prefix>-01, <prefix>-01-<topic>, ...
+CCS_PREFIX=myhost
+
+# Working directory Claude Code opens in.
+#
+# Do NOT point this at $HOME. Claude Code refuses to remember the trust prompt
+# for a home directory, so an unattended session would hang on it forever.
+# Use a dedicated folder and grant anything else through CCS_EXTRA_DIRS.
+CCS_WORKDIR=/home/me/workspace
+
+# Extra directories to expose, space separated. Each one may prompt for trust
+# the first time.
+CCS_EXTRA_DIRS=""
+
+# Upper bound on concurrent sessions. Each one is a separate claude process and
+# costs a few hundred MB of RAM, so keep this low on small machines.
+CCS_MAX_SESSIONS=4
+
+# 1 = when an idle session gets its first message, rename it after the topic of
+#     that message, both in tmux and in the Claude apps.
+# 0 = leave names alone.
+CCS_AUTO_RENAME=1
+
+# Size of the detached tmux pane. Larger panes render the Claude Code UI better
+# for clients that attach later.
+CCS_PANE_WIDTH=200
+CCS_PANE_HEIGHT=50

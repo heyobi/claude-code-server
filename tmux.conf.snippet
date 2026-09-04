@@ -1,0 +1,13 @@
+
+# --- claude-code-server ---------------------------------------------------
+# escape-time matters most here: the default 500ms delay makes Claude Code's
+# TUI feel broken when you attach over SSH.
+set -sg escape-time 10
+set -g  mouse on
+set -g  history-limit 100000
+set -g  default-terminal "tmux-256color"
+set -ga terminal-overrides ",*256col*:Tc"
+set -g  focus-events on
+set -g  base-index 1
+setw -g pane-base-index 1
+# --- end claude-code-server -----------------------------------------------

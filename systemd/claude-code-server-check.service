@@ -1,0 +1,7 @@
+[Unit]
+Description=Claude Code session pool check
+Documentation=https://github.com/heyobi/claude-code-server
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/share/claude-code-server/bin/ccs-pool.sh

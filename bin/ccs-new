@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Start a named Claude Code session.
+#
+#   ccs-new model download
+#
+# creates a session that shows up in the Claude apps as <prefix>-model-download.
+# Sessions you name yourself are never auto renamed by the pool.
+set -euo pipefail
+
+CCS_BIN="$(dirname "$(readlink -f "$0")")"
+# shellcheck source=ccs-common.sh
+. "$CCS_BIN/ccs-common.sh"
+
+if [ $# -lt 1 ]; then
+  echo "usage: ccs-new <topic>      e.g. ccs-new model download" >&2
+  exit 1
+fi
+
+topic=$(printf '%s' "$*" \
+  | tr '[:upper:]' '[:lower:]' \
+  | tr -cs 'a-z0-9' '-' \
+  | sed 's/^-//; s/-$//' \
+  | cut -c1-32)
+
+name="${CCS_PREFIX}-${topic}"
+
+if tmux has-session -t "$name" 2>/dev/null; then
+  echo "'$name' already exists. Attach with: tmux attach -t $name"
+  exit 0
+fi
+
+ccs_start "$name"
+echo "'$name' started. It will appear in the Claude apps under that name."
+echo "Attach locally with: tmux attach -t $name"
