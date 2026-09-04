@@ -338,31 +338,35 @@ picker, so the thing you most often want to change is one tap from where you are
 typing.
 
 The model sits in a pill, not as plain text beside the attach button — a label
-next to a control reads as a caption, and nobody taps a caption. The panel rests on the
-floor of the visible area, with no clearance at all, , which took some finding: on an
-installed iOS app with a translucent status bar the page is drawn from the very
-top of the display but the window is sized as though it began below the status
-bar, so `window.innerHeight` comes up exactly one inset short and everything
-fixed to the bottom of it floats that far above the glass. The phone's own
-numbers settled it — screen 874, window 812, top inset 62. The strip is still
-ours to paint into, so the composer is pushed down into it by the measured
-difference, guarded on the top inset being non-zero, on portrait, and on being
-the installed app.
+next to a control reads as a caption, and nobody taps a caption. The panel
+rests on the floor with no clearance at all: every version that kept some of
+the home indicator's inset read as hovering, and the system draws that
+indicator over content everywhere else too.
 
-Measured more than once, too: the first measurement lies. The app reports the
-full screen height for its window until the layout settles, which reads as no
-shortfall — and that is the moment a script at the end of the body runs. So it
-is taken again as things come to rest, and on every resize, and never while the
-keyboard is up, because a composer that jumps mid-sentence is worse than one
-sitting a little high. There is a layout readout in the
-menu — screen, window, visual viewport, where the panel's bottom edge actually
-landed, and whether this is the installed app or a browser tab. A gap reported
-from a phone and reproducible nowhere else is a measurement problem, and the
-phone should be the one doing the measuring. If the window is shorter than the
-screen, the strip underneath is the browser's, and no amount of CSS inside the
-page will reach it. Every version of this that
-kept some of the home indicator's inset read as hovering, and the system draws
-that indicator over content everywhere else too.
+Getting it to actually reach the floor took some finding, and one wrong turn.
+On an installed iOS app with a translucent status bar the page is drawn from
+the very top of the display, but the window is sized as though it began below
+the status bar — so `window.innerHeight` comes up exactly one inset short and
+everything fixed to the bottom of it floats that far above the glass. The
+phone's own numbers gave the diagnosis: screen 874, window 812, top inset 62.
+
+The wrong turn was assuming the missing strip was still the page's to paint,
+and pushing the composer down into it. The composer came back cut in half: the
+strip is off the end of the window, not part of it. The fix is to stop asking
+for the translucent bar — with `apple-mobile-web-app-status-bar-style` at
+`default` the window is placed below the status bar and its bottom edge lands
+on the bottom of the screen. iOS reads that meta when the app is installed, so
+one already on the home screen has to be removed and added again for it to
+take.
+
+There is a layout readout in the menu for exactly this kind of thing: screen,
+window, visual viewport, both insets, where the panel's bottom edge actually
+landed, the shortfall, and whether this is the installed app or a browser tab.
+A gap reported from a phone and reproducible nowhere else is a measurement
+problem, and the phone should be the one doing the measuring. The shortfall is
+measured more than once, too — an installed app reports the full screen height
+for its window until the layout settles, which is exactly when a script at the
+end of the body runs.
 
 Nothing traps you behind the keyboard. Dragging the conversation dismisses it,
 so does tapping anything in it that is not a control, and the layout puts the
