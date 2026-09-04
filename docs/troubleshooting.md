@@ -38,6 +38,29 @@ for path, entry in config.get("projects", {}).items():
 PY
 ```
 
+### A chat went quiet after a reboot, and unarchiving it shows nothing
+
+Expected while the machine is down, and it fixes itself. Rebooting takes tmux
+and the claude process with it, so the Remote Control bridge drops and the app
+has nothing to talk to. Your messages are safe on disk the whole time.
+
+On the first pool tick after boot, conversations that were live before the
+reboot are resumed. Because Claude Code reuses the bridge session id, they come
+back at the same URL and the archived chat becomes live again. Give it a minute
+(`OnBootSec=1min`) and reload.
+
+If it does not come back:
+
+```bash
+tail ~/.claude/claude-code-server/pool.log     # look for "restore after boot"
+ccs-resume                                     # list conversations
+ccs-resume <session-id>                        # bring one back by hand
+```
+
+Restore only fires when the boot id changes, only for sessions whose name
+matches the current `CCS_PREFIX`, and only for conversations that have messages.
+Empty leftovers are pruned instead.
+
 ### ccs-list says "starting" and never changes
 
 The transcript for that session cannot be found. Either it really is still

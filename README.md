@@ -84,6 +84,8 @@ step exists and why it must not be automated.
 ```bash
 ccs-list                    # sessions, state, and where to open each one
 ccs-new database migration  # a session named myhost-database-migration
+ccs-resume                  # list earlier conversations
+ccs-resume 8183e458         # bring one back, an id prefix is enough
 tmux attach -t myhost-01    # attach locally
 ```
 
@@ -92,6 +94,23 @@ and closing the last window ends the session. Closing the terminal window is
 safe; typing `exit` is not.
 
 From a phone, open the Claude app and pick the session by name.
+
+### Rebooting is fine, including from inside a session
+
+Ask Claude to reboot the machine and it will take its own session down with it:
+tmux dies, the process dies, the Remote Control bridge drops, and the chat goes
+quiet in the apps.
+
+On the first pool tick after the machine comes back, every conversation that was
+live before the reboot is resumed. Claude Code keeps the same bridge session id
+across a resume, so those chats come back **at the URL they already had** — an
+archived conversation in the app goes live again instead of showing up as a new
+one. Nothing is lost either way: the transcripts are on disk the whole time.
+
+A session you close yourself during normal running stays closed. Only a reboot
+triggers the restore, and only for conversations that actually have messages in
+them. If more were open than `CCS_MAX_SESSIONS` allows, the rest are left for
+`ccs-resume`.
 
 ## Configuration
 
@@ -110,6 +129,10 @@ From a phone, open the Claude app and pick the session by name.
 
 ```
 systemd timer ──every 2 min──> ccs-pool.sh
+                                   │
+                                   ├─ boot_id changed since last run?
+                                   │    resume every conversation that was live
+                                   │    before the reboot
                                    │
                                    ├─ for each tmux session matching the prefix:
                                    │    read its transcript

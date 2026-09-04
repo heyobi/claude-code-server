@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# Bring an old conversation back under Remote Control.
+#
+#   ccs-resume                 list conversations you can bring back
+#   ccs-resume <session-id>    bring one back (a unique id prefix is enough)
+#
+# Claude Code reuses the bridge session id when resuming, so the conversation
+# reappears at the URL it already had. An archived chat in the Claude apps goes
+# live again rather than turning up as a new one.
+set -uo pipefail
+
+CCS_BIN="$(dirname "$(readlink -f "$0")")"
+# shellcheck source=ccs-common.sh
+. "$CCS_BIN/ccs-common.sh"
+
+PROJDIR="$(ccs_projdir)"
+
+if [ ! -d "$PROJDIR" ]; then
+  echo "No conversations yet: $PROJDIR does not exist." >&2
+  exit 1
+fi
+
+# tmux session currently showing this transcript, if any
+open_as() {
+  local uuid="$1" name
+  for name in $(tmux list-sessions -F '#{session_name}' 2>/dev/null); do
+    if [ -f "$CCS_POOLDIR/${name}.uuid" ] \
+       && [ "$(cat "$CCS_POOLDIR/${name}.uuid")" = "$uuid" ]; then
+      printf '%s' "$name"
+      return 0
+    fi
+  done
+  return 1
+}
+
+list_conversations() {
+  local found=0 transcript uuid messages topic when where
+  printf '%-38s %-5s %-12s %-24s %s\n' "SESSION ID" "MSGS" "WHEN" "TOPIC" "STATE"
+  for transcript in $(ls -t "$PROJDIR"/*.jsonl 2>/dev/null); do
+    messages=$(ccs_usercount "$transcript")
+    [ "$messages" -eq 0 ] && continue
+    found=1
+    uuid=$(basename "$transcript" .jsonl)
+    topic=$("$CCS_BIN/ccs-topic.py" "$transcript" 2>/dev/null)
+    when=$(date -r "$transcript" '+%d/%m %H:%M')
+    if where=$(open_as "$uuid"); then
+      printf '%-38s %-5s %-12s %-24s open as %s\n' "$uuid" "$messages" "$when" "${topic:0:24}" "$where"
+    else
+      printf '%-38s %-5s %-12s %-24s closed\n' "$uuid" "$messages" "$when" "${topic:0:24}"
+    fi
+  done
+  if [ "$found" -eq 0 ]; then
+    echo "(nothing to resume yet)"
+  else
+    echo
+    echo "Bring one back with: ccs-resume <session-id>"
+  fi
+}
+
+if [ $# -eq 0 ]; then
+  list_conversations
+  exit 0
+fi
+
+# Resolve the argument: full id, unique prefix, or a session name we know.
+want="$1"
+transcript=""
+
+if [ -f "$PROJDIR/${want}.jsonl" ]; then
+  transcript="$PROJDIR/${want}.jsonl"
+elif [ -f "$CCS_POOLDIR/${want}.uuid" ]; then
+  transcript="$PROJDIR/$(cat "$CCS_POOLDIR/${want}.uuid").jsonl"
+else
+  matches=$(find "$PROJDIR" -maxdepth 1 -name "${want}*.jsonl" 2>/dev/null)
+  count=$(printf '%s\n' "$matches" | grep -c . || true)
+  if [ "$count" -eq 1 ]; then
+    transcript="$matches"
+  elif [ "$count" -gt 1 ]; then
+    echo "'$want' matches $count conversations. Use a longer prefix:" >&2
+    printf '%s\n' "$matches" | xargs -n1 basename 2>/dev/null | sed 's/\.jsonl$//; s/^/  /' >&2
+    exit 1
+  fi
+fi
+
+if [ -z "$transcript" ] || [ ! -f "$transcript" ]; then
+  echo "No conversation matches '$want'. Run ccs-resume with no arguments to list them." >&2
+  exit 1
+fi
+
+uuid=$(basename "$transcript" .jsonl)
+
+if where=$(open_as "$uuid"); then
+  echo "Already open as '$where'. Attach with: tmux attach -t $where"
+  exit 0
+fi
+
+topic=$("$CCS_BIN/ccs-topic.py" "$transcript" 2>/dev/null)
+[ -z "$topic" ] && topic="resumed"
+name="${CCS_PREFIX}-${topic}"
+
+suffix=2
+while tmux has-session -t "$name" 2>/dev/null; do
+  name="${CCS_PREFIX}-${topic}-${suffix}"
+  suffix=$((suffix + 1))
+done
+
+ccs_resume "$name" "$uuid"
+echo "Resumed as '$name' ($(ccs_usercount "$transcript") messages)."
+echo "It will reappear in the Claude apps at the link it already had."
+echo "Attach locally with: tmux attach -t $name"

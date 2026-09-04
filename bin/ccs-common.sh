@@ -50,6 +50,18 @@ ccs_start() {
   ccs_log "started: $name (session-id $uuid)"
 }
 
+# Bring an existing conversation back under Remote Control. Claude Code reuses
+# the same bridge session id when resuming, so the chat reappears at the URL it
+# already had: an archived conversation in the apps becomes live again.
+ccs_resume() {
+  local name="$1" uuid="$2"
+  # shellcheck disable=SC2086
+  tmux new-session -d -s "$name" -x "$CCS_PANE_WIDTH" -y "$CCS_PANE_HEIGHT" -c "$CCS_WORKDIR" \
+    "claude --resume $uuid --remote-control $name$(ccs_adddirs)"
+  printf '%s\n' "$uuid" > "$CCS_POOLDIR/${name}.uuid"
+  ccs_log "resumed: $name ($uuid)"
+}
+
 # tmux session name -> transcript path
 ccs_transcript() {
   local name="$1" uuid projdir link cse

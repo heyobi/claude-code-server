@@ -12,6 +12,61 @@ CCS_BIN="$(dirname "$(readlink -f "$0")")"
 # shellcheck source=ccs-common.sh
 . "$CCS_BIN/ccs-common.sh"
 
+# ---------------------------------------------------------------------------
+# After a reboot, bring back the conversations that were live before it.
+#
+# Rebooting from inside a session kills tmux and the claude process with it, so
+# the Remote Control bridge drops and the chat goes quiet in the apps. Resuming
+# reuses the same bridge id, so those conversations come back where they were.
+#
+# This runs only on the first pool tick after a boot. A session you close
+# yourself during normal operation stays closed.
+# ---------------------------------------------------------------------------
+restore_after_boot() {
+  local projdir restored=0 uuid_file name uuid transcript
+  projdir=$(ccs_projdir)
+
+  # Most recently touched conversations first.
+  for uuid_file in $(ls -t "$CCS_POOLDIR"/*.uuid 2>/dev/null); do
+    name=$(basename "$uuid_file" .uuid)
+
+    # Records left over from a different CCS_PREFIX are not ours to revive.
+    case "$name" in
+      "$CCS_PREFIX" | "$CCS_PREFIX"-*) ;;
+      *) continue ;;
+    esac
+
+    uuid=$(cat "$uuid_file" 2>/dev/null)
+    transcript="$projdir/${uuid}.jsonl"
+
+    tmux has-session -t "$name" 2>/dev/null && continue
+
+    # Never used, or the transcript is gone: just a leftover, drop the record.
+    if [ ! -f "$transcript" ] || [ "$(ccs_usercount "$transcript")" -eq 0 ]; then
+      rm -f "$uuid_file"
+      continue
+    fi
+
+    if [ "$restored" -ge "$CCS_MAX_SESSIONS" ]; then
+      ccs_log "restore: reached limit, $name left for ccs-resume"
+      continue
+    fi
+
+    ccs_resume "$name" "$uuid"
+    restored=$((restored + 1))
+    sleep 2
+  done
+
+  ccs_log "restore after boot: $restored conversation(s) brought back"
+}
+
+current_boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
+stored_boot=$(cat "$CCS_STATE/boot_id" 2>/dev/null || true)
+if [ -n "$current_boot" ] && [ "$current_boot" != "$stored_boot" ]; then
+  printf '%s\n' "$current_boot" > "$CCS_STATE/boot_id"
+  [ -n "$stored_boot" ] && restore_after_boot
+fi
+
 have_idle=0
 count=0
 
