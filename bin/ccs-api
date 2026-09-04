@@ -310,9 +310,16 @@ def inside(path):
     """Resolve a request to a real path under the workspace, or nothing.
 
     The API is reachable from the internet, so this is the boundary between
-    browsing your project and browsing your disk."""
+    browsing your project and browsing your disk. Absolute paths are accepted
+    when they are already inside — a model writing about a file it just made
+    usually writes the whole path.
+    """
     root = os.path.realpath(WORKDIR)
-    full = os.path.realpath(os.path.join(root, (path or "").lstrip("/")))
+    wanted = path or ""
+    if os.path.isabs(wanted):
+        full = os.path.realpath(wanted)
+    else:
+        full = os.path.realpath(os.path.join(root, wanted.lstrip("/")))
     if full == root or full.startswith(root + os.sep):
         return full
     return None
@@ -465,6 +472,20 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- routes
 
+    def do_HEAD(self):
+        """Same routing as GET, minus the body. The client uses it to ask
+        whether a path it read out of an answer is really a file."""
+        path, query = self.split()
+        if not authorised(self, query):
+            return self.reply(401, {"error": "token"})
+        if path == "/api/file":
+            wanted = (query.get("path") or [""])[0]
+            full = inside(wanted)
+            if not full or not os.path.isfile(full):
+                return self.reply(404, {"error": "no such file"})
+            return self.reply(200, {"ok": True})
+        return self.reply(404, {"error": "not found"})
+
     def do_GET(self):
         path, query = self.split()
         if not path.startswith("/api/"):
@@ -498,6 +519,10 @@ class Handler(BaseHTTPRequestHandler):
         path, query = self.split()
         if not authorised(self, query):
             return self.reply(401, {"error": "token"})
+        # Before body(): on an upload the body is the file, and reading it as
+        # json would swallow it.
+        if path == "/api/upload":
+            return self.upload(query)
         data = self.body()
         if path == "/api/message":
             return self.message(data)
@@ -702,6 +727,41 @@ class Handler(BaseHTTPRequestHandler):
         time.sleep(0.2)
         tmux("send-keys", "-t", name, "Enter")
         return self.reply(200, {"ok": True})
+
+    def upload(self, query):
+        """Take a file and put it where the session can open it.
+
+        The name comes from the client, so it is treated as hostile: basename
+        only, stripped, and the result still has to land inside the workspace.
+        """
+        name = os.path.basename((query.get("name") or ["dosya"])[0])
+        name = "".join(c for c in name if c.isalnum() or c in "._- ")[:80].strip()
+        if not name or name.startswith("."):
+            name = "dosya-{}".format(int(time.time()))
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0 or length > FILE_MAX:
+            return self.reply(413, {"error": "size"})
+
+        folder = os.path.join(os.path.realpath(WORKDIR), "gelen")
+        os.makedirs(folder, exist_ok=True)
+        stem, ext = os.path.splitext(name)
+        target = os.path.join(folder, name)
+        count = 1
+        while os.path.exists(target):
+            target = os.path.join(folder, "{}-{}{}".format(stem, count, ext))
+            count += 1
+
+        remaining = length
+        with open(target, "wb") as handle:
+            while remaining > 0:
+                chunk = self.rfile.read(min(65536, remaining))
+                if not chunk:
+                    break
+                handle.write(chunk)
+                remaining -= len(chunk)
+        rel = os.path.relpath(target, os.path.realpath(WORKDIR))
+        return self.reply(200, {"ok": True, "path": rel, "kind": kind_of(rel),
+                                "size": os.path.getsize(target)})
 
     def file(self, wanted, raw):
         full = inside(wanted)

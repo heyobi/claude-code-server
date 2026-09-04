@@ -130,19 +130,27 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 #stream {
   position: fixed; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  padding: calc(env(safe-area-inset-top) + var(--bar-top)) 12px
+  /* Narrower gutters: the text was being squeezed into the middle of the
+     screen for no reason. */
+  padding: calc(env(safe-area-inset-top) + var(--bar-top)) 10px
            calc(env(safe-area-inset-bottom) + var(--bar-bottom));
 }
-.turn { margin: 0 0 12px; max-width: 88%; }
-.turn.user { margin-left: auto; }
-.bubble {
-  background: var(--panel); border: 1px solid var(--line);
-  padding: 9px 12px; border-radius: var(--radius);
-  white-space: pre-wrap; overflow-wrap: anywhere;
+/* What you said is a message and sits in one. What the model says is the page
+   itself — an answer arriving in a box reads as finished, and it is being
+   written while you watch, with tool calls landing in the middle of it. */
+.turn { margin: 0 0 14px; }
+.turn.user { max-width: 86%; margin-left: auto; }
+.turn.assistant { max-width: 100%; }
+.bubble { white-space: pre-wrap; overflow-wrap: anywhere; }
+.turn.user .bubble {
+  background: var(--mine); border-radius: var(--radius);
+  padding: 10px 13px;
+  box-shadow: inset 0 1px 0 0 var(--rim-top), inset 0 0 0 .5px var(--rim-line);
 }
-.turn.user .bubble { background: var(--mine); border-color: transparent; }
-.meta { font-size: 11px; color: var(--dim); margin: 4px 2px 0; }
+.turn.assistant .bubble { padding: 0 2px; }
+.meta { font-size: 11px; color: var(--dim); margin: 5px 2px 0; }
 .turn.user .meta { text-align: right; }
+.turn.assistant + .turn.user { margin-top: 20px; }
 .bubble code, .bubble pre {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
 }
@@ -194,7 +202,6 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 .bubble a { color: var(--accent); }
 
 /* The answer arriving. A caret is the cheapest way to say "still going". */
-.turn.live .bubble { border-style: dashed; }
 .caret {
   display: inline-block; width: 7px; height: 1em; margin-left: 2px;
   background: var(--accent); vertical-align: -2px; animation: blink 1.1s steps(2) infinite;
@@ -332,6 +339,11 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
   transition: transform .12s ease;
 }
 .chip:active { transform: scale(.95); }
+/* A file preview is a card again — it is a thing, not prose. */
+.turn .bubble.preview {
+  background: var(--key); border-radius: var(--radius); padding: 11px 12px;
+  box-shadow: inset 0 0 0 .5px var(--rim-line);
+}
 .bubble.preview .fname {
   font-size: 12.5px; color: var(--dim); margin-bottom: 8px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -345,7 +357,7 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 /* ---------------------------------------------------------------- composer */
 #composer {
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 5;
-  display: flex; gap: 8px; align-items: flex-end;
+  display: block;
   padding: 9px 12px calc(env(safe-area-inset-bottom) + 9px);
   background: var(--glass);
   -webkit-backdrop-filter: saturate(180%) blur(24px);
@@ -353,6 +365,41 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
   border-top: .5px solid var(--rim-line);
   box-shadow: inset 0 1px 0 0 var(--rim-top), 0 -2px 14px -6px var(--cast-far);
 }
+#entry { display: flex; gap: 8px; align-items: flex-end; }
+#attach { width: 40px; height: 40px; font-size: 22px; line-height: 1; }
+
+/* What is about to be sent, before it is sent. Images as thumbnails, because
+   the whole point of attaching one is that you can see which one it is. */
+#tray { display: none; gap: 8px; padding: 0 0 9px; overflow-x: auto; }
+#tray.on { display: flex; }
+.att {
+  position: relative; flex: none; border-radius: 12px; overflow: hidden;
+  background: var(--key); box-shadow: inset 0 0 0 .5px var(--rim-line);
+}
+.att img { width: 62px; height: 62px; object-fit: cover; display: block; }
+.att .name {
+  display: flex; align-items: center; height: 62px; padding: 0 12px;
+  font-size: 12.5px; color: var(--ink); max-width: 168px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.att .drop {
+  position: absolute; top: 3px; right: 3px; width: 20px; height: 20px;
+  border: none; border-radius: 50%; background: rgba(0, 0, 0, .62);
+  color: #fff; font-size: 11px; line-height: 1; padding: 0;
+}
+.att.busy { opacity: .5; }
+
+/* An image someone attached, shown in their own message. */
+.turn .shots { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 6px; }
+.turn .shots img {
+  max-width: 190px; max-height: 190px; border-radius: 11px; display: block;
+  background: var(--key); min-width: 60px; min-height: 44px;
+}
+.mediafail {
+  font-size: 12.5px; color: var(--warn); padding: 8px 10px;
+  border-radius: 10px; background: var(--key);
+}
+
 #text {
   flex: 1; resize: none; max-height: 130px;
   padding: 11px 15px; border-radius: 21px;
@@ -521,14 +568,19 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
   <div id="stream"></div>
 
   <form id="composer">
-    <textarea id="text" rows="1" placeholder="Mesaj yaz…" enterkeyhint="send"></textarea>
-    <button id="send" type="submit" title="Gönder">↑</button>
+    <div id="tray"></div>
+    <div id="entry">
+      <button class="icon" id="attach" type="button" title="Ekle">＋</button>
+      <textarea id="text" rows="1" placeholder="Mesaj yaz…" enterkeyhint="send"></textarea>
+      <button id="send" type="submit" title="Gönder">↑</button>
+    </div>
+    <input id="picker" type="file" multiple hidden>
   </form>
 </div>
 
 <div id="veil"><div id="sheet"></div></div>
 <div id="popveil"><div id="pop"></div></div>
 
-<script src="app.js?v=18"></script>
+<script src="app.js?v=21"></script>
 </body>
 </html>

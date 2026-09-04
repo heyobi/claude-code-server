@@ -302,6 +302,11 @@ renamed from there too, which moves the id and the backend record with the name
 
 ### Files
 
+Files go both ways. The composer takes photos and documents, uploads them into
+the workspace and shows what is queued before you send; the message then carries
+the path, because a path is what a session can open. An image someone attached
+appears in their own message rather than being described in it.
+
 Whatever a session produces is on the machine, which is not the same as being
 reachable. The app browses the workspace and opens what it finds: images,
 audio and video play in the conversation, text and code open in a block, and a
@@ -311,8 +316,15 @@ it.
 
 `/api/file` resolves every request against the workspace root and refuses
 anything that lands outside it, which matters more than usual here because the
-API is reachable from the internet. The token travels in the query rather than
-a header for these, since an `<img>` cannot send one.
+API is reachable from the internet. Absolute paths are accepted when they are
+already inside, because a model writing about a file it just made writes the
+whole path.
+
+Media is fetched and handed over as a blob rather than pointed at with a `src`.
+An `<img>` cannot send a header, cannot say why it failed, and would put the
+token in a URL; fetching returns all three. It also matters for the paths read
+out of an answer, which are guesses — one that does not resolve removes itself
+instead of leaving a broken icon behind.
 
 ### Notifications
 

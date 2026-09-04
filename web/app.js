@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v18';
+const BUILD = 'v21';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -156,7 +156,9 @@ function addTurn(turn) {
   wrap.innerHTML =
     '<div class="bubble">' + render(turn.text) + '</div>' +
     '<div class="meta">' + [label, time].filter(Boolean).join(' · ') + '</div>';
-  const bar = turn.role === 'assistant' ? attachments(turn.text) : null;
+  const shots = pictures(turn.text);
+  if (shots) wrap.insertBefore(shots, wrap.firstElementChild);
+  const bar = attachments(turn.text);
   if (bar) wrap.insertBefore(bar, wrap.lastElementChild);
   $('stream').appendChild(wrap);
 }
@@ -488,6 +490,57 @@ function pickModel(provider) {
   });
 }
 
+/* ------------------------------------------------------------ attachments */
+
+let tray = [];   // { path, kind, name } waiting to be sent
+
+function paintTray() {
+  const box = $('tray');
+  box.innerHTML = '';
+  box.classList.toggle('on', tray.length > 0);
+  tray.forEach((item, index) => {
+    const cell = document.createElement('div');
+    cell.className = 'att' + (item.path ? '' : ' busy');
+    cell.innerHTML = item.kind === 'image' && item.path
+      ? '<img alt="">'
+      : '<span class="name">' + (ICON[item.kind] || '📄') + ' ' + esc(item.name) + '</span>';
+    const shot = cell.querySelector('img');
+    if (shot) feed(shot, item.path, () => {
+      cell.innerHTML = '<span class="name">🖼 ' + esc(item.name) + '</span>';
+    });
+    const drop = document.createElement('button');
+    drop.className = 'drop';
+    drop.type = 'button';
+    drop.textContent = '✕';
+    drop.onclick = () => { tray.splice(index, 1); paintTray(); };
+    cell.appendChild(drop);
+    box.appendChild(cell);
+  });
+}
+
+async function takeFiles(files) {
+  for (const file of files) {
+    const item = { name: file.name, kind: kindOf(file.name), path: '' };
+    tray.push(item);
+    paintTray();
+    try {
+      const res = await fetch('/api/upload?name=' + encodeURIComponent(file.name), {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + TOKEN },
+        body: file,
+      });
+      const info = await res.json();
+      if (!info.path) throw new Error(info.error || 'upload');
+      item.path = info.path;
+      item.kind = info.kind || item.kind;
+    } catch (e) {
+      tray = tray.filter((x) => x !== item);
+      note('Yüklenemedi: ' + file.name);
+    }
+    paintTray();
+  }
+}
+
 /* ---------------------------------------------------------------- tools */
 
 // What a call was actually about, in a few words. The first argument is almost
@@ -642,7 +695,7 @@ async function renameSheet() {
 // A path in an answer is usually something you want to look at. These are the
 // extensions where that is true; anything else stays plain text.
 const FILEISH = new RegExp(
-  '(?:^|[\\s(`"\'>])((?:[\\w.-]+/)*[\\w.-]+\\.' +
+  '(?:^|[\\s(`"\'>])(/?(?:[\\w.-]+/)*[\\w.-]+\\.' +
   '(?:png|jpe?g|gif|webp|svg|avif|mp3|wav|ogg|m4a|flac|mp4|webm|mov|pdf|html?' +
   '|md|csv|json|txt|log|py|js|ts|sh|ya?ml))(?=$|[\\s)`"\'.,:;])', 'gi');
 const ARTIFACT = /https:\/\/claude\.ai\/code\/artifact\/[\w-]+/gi;
@@ -652,6 +705,34 @@ const ARTIFACT = /https:\/\/claude\.ai\/code\/artifact\/[\w-]+/gi;
 function fileUrl(path, raw) {
   return '/api/file?path=' + encodeURIComponent(path) +
     (raw ? '&raw=1' : '') + '&token=' + encodeURIComponent(TOKEN);
+}
+
+// An <img src> cannot send a header, cannot report why it failed, and puts the
+// token in a URL. Fetching gives all three back: the header goes, the blob is
+// local, and a response that is not media says so instead of drawing a broken
+// icon.
+const blobs = new Map();
+
+async function mediaUrl(path) {
+  if (blobs.has(path)) return blobs.get(path);
+  const res = await fetch('/api/file?path=' + encodeURIComponent(path),
+                          { headers: { Authorization: 'Bearer ' + TOKEN } });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const type = res.headers.get('content-type') || '';
+  if (/^text\/html/.test(type)) throw new Error('oturum düşmüş, sayfayı yenile');
+  const url = URL.createObjectURL(await res.blob());
+  blobs.set(path, url);
+  return url;
+}
+
+// Fills an element once the bytes are here, and puts the reason in its place
+// if they never arrive.
+function feed(el, path, onFail) {
+  mediaUrl(path).then((url) => { el.src = url; }).catch((e) => {
+    if (onFail) onFail(String(e.message || e));
+    else el.replaceWith(Object.assign(document.createElement('div'),
+      { className: 'mediafail', textContent: path + ' — ' + (e.message || e) }));
+  });
 }
 
 function kindOf(name) {
@@ -667,7 +748,33 @@ function kindOf(name) {
 const ICON = { image: '🖼', audio: '🎧', video: '🎬', page: '🌐', pdf: '📄',
                text: '📄', dir: '📁', file: '📄' };
 
-// Shown under an answer that mentioned something openable.
+// Images named in a message are shown, not described. Everything else becomes
+// a button underneath.
+function pictures(text) {
+  const found = [];
+  let m;
+  const re = new RegExp(FILEISH.source, 'gi');
+  while ((m = re.exec(text))) {
+    if (kindOf(m[1]) === 'image' && !found.includes(m[1])) found.push(m[1]);
+  }
+  if (!found.length) return null;
+  const box = document.createElement('div');
+  box.className = 'shots';
+  found.slice(0, 4).forEach((path) => {
+    const img = document.createElement('img');
+    img.onclick = () => openFile(path, 'image');
+    box.appendChild(img);
+    // These paths were read out of prose. One that does not resolve was never
+    // a file, so it leaves quietly rather than announcing itself.
+    feed(img, path, () => {
+      img.remove();
+      if (!box.children.length) box.remove();
+    });
+  });
+  return box;
+}
+
+// Shown under a message that mentioned something openable.
 function attachments(text) {
   const found = new Map();
   let m;
@@ -684,6 +791,12 @@ function attachments(text) {
     chip.onclick = () => (item.url ? window.open(item.url, '_blank')
                                    : openFile(item.path, item.kind));
     bar.appendChild(chip);
+    if (!item.url) {
+      // Same reasoning as the pictures: prove it exists before offering it.
+      fetch('/api/file?path=' + encodeURIComponent(item.path), {
+        method: 'HEAD', headers: { Authorization: 'Bearer ' + TOKEN },
+      }).then((r) => { if (!r.ok) chip.remove(); }).catch(() => chip.remove());
+    }
   });
   return bar;
 }
@@ -699,13 +812,13 @@ function openFile(path, kind) {
   const card = document.createElement('div');
   card.className = 'turn assistant';
   const name = path.split('/').pop();
-  let inner = '';
-  if (kind === 'image') inner = '<img src="' + fileUrl(path) + '" alt="">';
-  else if (kind === 'audio') inner = '<audio controls src="' + fileUrl(path) + '"></audio>';
-  else if (kind === 'video') inner = '<video controls src="' + fileUrl(path) + '"></video>';
-  card.innerHTML = '<div class="bubble preview"><div class="fname">' + name +
-    '</div>' + inner + '</div><div class="meta"></div>';
+  const tag = { image: 'img', audio: 'audio', video: 'video' }[kind] || '';
+  card.innerHTML = '<div class="bubble preview"><div class="fname">' + esc(name) +
+    '</div>' + (tag ? '<' + tag + (tag === 'img' ? '' : ' controls') + '></' + tag + '>' : '') +
+    '</div><div class="meta"></div>';
   $('stream').appendChild(card);
+  const media = card.querySelector('img, audio, video');
+  if (media) feed(media, path);
   if (kind === 'text') {
     fetch(fileUrl(path))
       .then((r) => (r.ok ? r.text() : Promise.reject(r.status)))
@@ -852,12 +965,26 @@ text.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('composer').requestSubmit(); }
 });
 
+$('attach').onclick = () => $('picker').click();
+$('picker').onchange = async (e) => {
+  await takeFiles([...e.target.files]);
+  e.target.value = '';
+};
+
 $('composer').onsubmit = async (e) => {
   e.preventDefault();
-  const body = text.value.trim();
-  if (!body || !session) return;
+  const ready = tray.filter((x) => x.path);
+  const typed = text.value.trim();
+  if ((!typed && !ready.length) || !session) return;
+  // The session reads files by path, so that is what a message carries.
+  const paths = ready.map((x) => x.path);
+  const body = [typed, paths.length
+    ? 'Ekli dosya' + (paths.length > 1 ? 'lar' : '') + ': ' + paths.join(', ')
+    : ''].filter(Boolean).join('\n\n');
   text.value = '';
   text.style.height = 'auto';
+  tray = [];
+  paintTray();
   try {
     await post('/api/message', { session, text: body });
   } catch {
