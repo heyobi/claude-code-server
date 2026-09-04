@@ -85,7 +85,7 @@ step exists and why it must not be automated.
 ccs-list                    # sessions, state, and where to open each one
 ccs-new database migration  # a session named myhost-database-migration
 ccs-resume                  # list earlier conversations
-ccs-resume 8183e458         # bring one back, an id prefix is enough
+ccs-resume 4f2c91ab         # bring one back, an id prefix is enough
 ccs-close myhost-02-fix     # stop a session for good
 tmux attach -t myhost-01    # attach locally
 ```
