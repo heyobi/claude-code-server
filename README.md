@@ -234,6 +234,15 @@ standard library rather than a frame codec. A client says which byte of the
 transcript it has reached, so reconnecting resumes exactly there and a duplicate
 is not expressible.
 
+A turn only reaches the transcript once it is finished, though, and waiting in
+silence through a two minute answer is the difference between a tool and a form
+you submitted. The text is already visible somewhere — the pane is being drawn
+into as it arrives — so while a session is busy the stream also carries what is
+on screen, with the elapsed time and token count from the spinner. That preview
+is whatever fits on the pane and is replaced by the real turn when it lands: a
+window, not a record. Getting it out means leaving the furniture behind, since
+the spinner, the finished-in-Ns line and the rotating tips share that region.
+
 ```sh
 systemctl --user enable --now ccs-api
 ccs-api --print-token          # paste this into the app once
