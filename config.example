@@ -29,3 +29,28 @@ CCS_AUTO_RENAME=1
 # for clients that attach later.
 CCS_PANE_WIDTH=200
 CCS_PANE_HEIGHT=50
+
+# Channels (experimental in Claude Code): a messaging bridge that injects
+# messages into a session, so you can drive it from Telegram or Discord.
+#
+# One bot token supports exactly one listener, so this is a single dedicated
+# session rather than something every pool session gets. Leave both empty to
+# turn it off.
+#
+#   CCS_CHANNEL=plugin:telegram@claude-plugins-official
+#   CCS_CHANNEL_SESSION=telegram      # -> <prefix>-telegram
+#
+# Install the plugin and configure its token first; see
+# https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins
+CCS_CHANNEL=""
+CCS_CHANNEL_SESSION=""
+
+# Model and permission mode for every session the pool starts.
+#
+# Permission mode matters when you drive a session from a chat app: the channel
+# plugins relay permission prompts to your phone, so anything Claude has to ask
+# about shows up there. Under "auto" it rarely asks, so you get answers without
+# ever seeing the commands. "acceptEdits" lets edits through and prompts on
+# commands, which is usually what you want on a machine you care about.
+CCS_MODEL=""
+CCS_PERMISSION_MODE=""

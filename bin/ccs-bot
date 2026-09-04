@@ -1,0 +1,1246 @@
+#!/usr/bin/env python3
+"""Telegram control bot for claude-code-server.
+
+Runs as its own systemd service, next to the session pool but independent of it.
+Commands are handled here, in this process — they never reach a model. That is
+the point: you reach for /model exactly when the model is unreachable, so the
+control path cannot depend on one.
+
+Chat messages are typed into the session with tmux and answers are read back out
+of the session transcript, so no channel plugin is involved and nothing needs
+the research-preview flags.
+
+Standard library only.
+"""
+
+import html
+import json
+import os
+import re
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+
+HOME = os.path.expanduser("~")
+STATE_DIR = os.path.join(HOME, ".claude", "claude-code-server")
+BOT_STATE = os.path.join(STATE_DIR, "bot.json")
+TOKEN_ENV = os.path.join(HOME, ".claude", "channels", "telegram", ".env")
+ACCESS_JSON = os.path.join(HOME, ".claude", "channels", "telegram", "access.json")
+BIN = os.path.dirname(os.path.realpath(__file__))
+
+API = "https://api.telegram.org/bot{}/{}"
+POLL_TIMEOUT = 50
+REPLY_POLL = 1.5          # seconds between transcript checks
+REPLY_QUIET = 6.0         # stop waiting once the transcript is quiet this long
+REPLY_MAX = 900.0         # give up on a single answer after this long
+CHUNK = 3500              # Telegram hard limit is 4096
+HISTORY_TURNS = 6         # exchanges replayed when you switch to a session
+
+
+# --------------------------------------------------------------------------- config
+
+
+def load_env(path):
+    values = {}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                values[key.strip()] = value.strip().strip("'\"")
+    except OSError:
+        pass
+    return values
+
+
+def load_config():
+    """Read the pool config the same way the shell scripts do."""
+    path = os.path.join(HOME, ".config", "claude-code-server", "config")
+    cfg = load_env(path)
+    cfg.setdefault("CCS_PREFIX", os.uname().nodename.split(".")[0])
+    cfg.setdefault("CCS_WORKDIR", os.path.join(HOME, "workspace"))
+    return cfg
+
+
+CFG = load_config()
+PREFIX = CFG["CCS_PREFIX"]
+WORKDIR = CFG["CCS_WORKDIR"]
+PROJDIR = os.path.join(HOME, ".claude", "projects", WORKDIR.replace("/", "-"))
+POOLDIR = os.path.join(STATE_DIR, "sessions")
+
+TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or load_env(TOKEN_ENV).get("TELEGRAM_BOT_TOKEN")
+if not TOKEN:
+    sys.exit("No TELEGRAM_BOT_TOKEN in environment or {}".format(TOKEN_ENV))
+
+
+def allowed_users():
+    try:
+        with open(ACCESS_JSON, encoding="utf-8") as handle:
+            return {str(x) for x in json.load(handle).get("allowFrom", [])}
+    except OSError:
+        return set()
+
+
+# --------------------------------------------------------------------------- state
+
+
+def load_state():
+    try:
+        with open(BOT_STATE, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(state):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tmp = BOT_STATE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(state, handle, indent=2)
+    os.replace(tmp, BOT_STATE)
+
+
+STATE = load_state()
+STATE.setdefault("active", {})        # chat_id -> session name
+STATE.setdefault("relay_permissions", True)
+STATE.setdefault("msgs", {})           # chat -> [[message_id, sent_at], ...]
+STATE.setdefault("panel", {})          # chat -> the one live panel message
+LOCK = threading.Lock()
+
+
+def active_session(chat_id):
+    name = STATE["active"].get(str(chat_id))
+    if name and name in tmux_sessions():
+        return name
+    for candidate in ccs_sessions():   # fall back to whatever is there
+        set_active(chat_id, candidate)
+        return candidate
+    return None
+
+
+def set_active(chat_id, name):
+    with LOCK:
+        STATE["active"][str(chat_id)] = name
+        save_state(STATE)
+
+
+# --------------------------------------------------------------------------- shell
+
+
+def run(args, timeout=60):
+    try:
+        done = subprocess.run(
+            args, capture_output=True, text=True, timeout=timeout,
+            env={**os.environ, "PATH": "{}/.local/bin:/usr/local/bin:/usr/bin:/bin".format(HOME)},
+        )
+        return (done.stdout or "") + (done.stderr or "")
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return "command failed: {}".format(exc)
+
+
+_CACHE = {}
+
+
+def cached(key, ttl, produce):
+    """Menus fire several lookups per tap; a couple of seconds of memory keeps
+    the interface instant without ever showing properly stale data."""
+    now = time.time()
+    hit = _CACHE.get(key)
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    value = produce()
+    _CACHE[key] = (now, value)
+    return value
+
+
+def tmux(*args, timeout=15):
+    return run(["tmux", *args], timeout=timeout)
+
+
+def tmux_sessions():
+    def produce():
+        out = tmux("list-sessions", "-F", "#{session_name}")
+        return [l for l in out.splitlines() if l and not l.startswith("no server")]
+    return cached("sessions", 2.0, produce)
+
+
+def ccs_sessions():
+    return [s for s in tmux_sessions() if s.startswith(PREFIX)]
+
+
+def ccs(cmd, *args, timeout=90):
+    return run([os.path.join(BIN, cmd), *args], timeout=timeout)
+
+
+def session_uuid(name):
+    try:
+        with open(os.path.join(POOLDIR, name + ".uuid"), encoding="utf-8") as handle:
+            return handle.read().strip()
+    except OSError:
+        return None
+
+
+def transcript_of(name):
+    uid = session_uuid(name)
+    if not uid:
+        return None
+    path = os.path.join(PROJDIR, uid + ".jsonl")
+    return path if os.path.exists(path) else None
+
+
+def session_profile(name):
+    try:
+        with open(os.path.join(POOLDIR, name + ".profile"), encoding="utf-8") as handle:
+            return handle.read().strip() or "-"
+    except OSError:
+        return CFG.get("CCS_DEFAULT_PROFILE", "-") or "-"
+
+
+# --------------------------------------------------------------------------- telegram
+
+
+def api(method, **params):
+    data = json.dumps(params).encode()
+    req = urllib.request.Request(
+        API.format(TOKEN, method), data=data,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=POLL_TIMEOUT + 15) as resp:
+            return json.load(resp)
+    except urllib.error.HTTPError as exc:
+        try:
+            return json.load(exc)
+        except Exception:
+            return {"ok": False, "description": str(exc)}
+    except Exception as exc:
+        return {"ok": False, "description": str(exc)}
+
+
+MSG_TTL = 47 * 3600       # Telegram refuses to delete anything older than 48h
+MSG_KEEP = 500            # plenty for one screen of scrollback
+MSG_SWEEP = 150           # ids tried below the newest one, for scrollback
+                          # that predates the ledger
+
+
+def track(chat_id, message_id):
+    """Remember a message so a session switch can clear the screen later."""
+    if not message_id:
+        return
+    with LOCK:
+        log = STATE["msgs"].setdefault(str(chat_id), [])
+        log.append([int(message_id), int(time.time())])
+        del log[:-MSG_KEEP]
+        save_state(STATE)
+
+
+def wipe_chat(chat_id, newest=None):
+    """Clear the visible conversation. A bot may delete both sides of a private
+    chat, but only within 48 hours, so anything older simply stays put.
+
+    The ledger only knows what this process has seen, and the chat usually has
+    scrollback from before that. Message ids run in sequence within a chat, so
+    the ids just below the newest one are swept as well; ones that do not exist
+    or are too old are skipped by Telegram rather than failing the batch."""
+    with LOCK:
+        log = STATE["msgs"].get(str(chat_id), [])
+        now = time.time()
+        mine = {m for m, ts in log if now - ts < MSG_TTL}
+        STATE["msgs"][str(chat_id)] = []
+        save_state(STATE)
+    top = max(mine | ({int(newest)} if newest else set()) or {0})
+    ids = set(mine)
+    if top:
+        ids |= set(range(max(1, top - MSG_SWEEP), top + 1))
+    ordered = sorted(ids, reverse=True)
+    for start in range(0, len(ordered), 100):    # deleteMessages caps at 100
+        batch = ordered[start:start + 100]
+        if api("deleteMessages", chat_id=chat_id, message_ids=batch).get("ok"):
+            continue
+        for one in batch:                        # only chase our own on failure
+            if one in mine:
+                api("deleteMessage", chat_id=chat_id, message_id=one)
+
+
+def send(chat_id, text, keyboard=None, parse="HTML"):
+    for part in chunks(text):
+        params = {"chat_id": chat_id, "text": part, "disable_web_page_preview": True}
+        if parse:
+            params["parse_mode"] = parse
+        if keyboard and part is text:
+            params["reply_markup"] = {"inline_keyboard": keyboard}
+        result = api("sendMessage", **params)
+        if not result.get("ok") and parse:          # bad markup, retry as plain
+            params.pop("parse_mode", None)
+            result = api("sendMessage", **params)
+        track(chat_id, (result.get("result") or {}).get("message_id"))
+    if keyboard and len(text) > CHUNK:
+        tail = api("sendMessage", chat_id=chat_id, text="─" * 3,
+                   reply_markup={"inline_keyboard": keyboard})
+        track(chat_id, (tail.get("result") or {}).get("message_id"))
+
+
+def chunks(text):
+    text = text or "(bos)"
+    while len(text) > CHUNK:
+        cut = text.rfind("\n", 0, CHUNK)
+        if cut < CHUNK // 2:
+            cut = CHUNK
+        yield text[:cut]
+        text = text[cut:]
+    yield text
+
+
+def edit(chat_id, message_id, text, keyboard=None):
+    """Update a menu in place. Keeping the keyboard means a menu never vanishes
+    just because you picked something from it."""
+    api("editMessageText", chat_id=chat_id, message_id=message_id,
+        text=text, parse_mode="HTML",
+        reply_markup={"inline_keyboard": keyboard or []})
+
+
+def panel(chat_id, text, keyboard=None):
+    """One panel per chat, and it is always the last thing in it. Sending a
+    fresh menu for every action is what turns the chat into a pile of dead
+    keyboards, so the previous one goes away first."""
+    keyboard = main_panel() if keyboard is None else keyboard
+    with LOCK:
+        old = STATE["panel"].pop(str(chat_id), None)
+        save_state(STATE)
+    if old:
+        api("deleteMessage", chat_id=chat_id, message_id=old)
+    result = api("sendMessage", chat_id=chat_id, text=text,
+                 parse_mode="HTML", disable_web_page_preview=True,
+                 reply_markup={"inline_keyboard": keyboard})
+    mid = (result.get("result") or {}).get("message_id")
+    if mid:
+        track(chat_id, mid)
+        with LOCK:
+            STATE["panel"][str(chat_id)] = mid
+            save_state(STATE)
+
+
+def esc(text):
+    return html.escape(str(text), quote=False)
+
+
+# --------------------------------------------------------------------------- models
+
+
+# Aliases always resolve to the current release; the cache in ~/.claude.json
+# holds whatever extra options this account has been offered, with versions.
+CLAUDE_ALIASES = [
+    ("", "Varsayilan"),
+    ("opus", "Opus"),
+    ("sonnet", "Sonnet"),
+    ("fable", "Fable"),
+    ("haiku", "Haiku"),
+]
+
+
+def claude_models():
+    seen = {value for value, _ in CLAUDE_ALIASES}
+    models = list(CLAUDE_ALIASES)
+    try:
+        with open(os.path.join(HOME, ".claude.json"), encoding="utf-8") as handle:
+            cache = json.load(handle).get("additionalModelOptionsCache") or []
+    except (OSError, ValueError):
+        cache = []
+    for entry in cache:
+        value = entry.get("value")
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        label = entry.get("label") or value
+        note = (entry.get("description") or "").split("·")[0].strip()
+        models.append((value, "{} — {}".format(label, note) if note else label))
+    return models
+
+
+def gateway_models(profile):
+    return cached("models:" + profile, 120.0, lambda: _gateway_models(profile))
+
+
+def _gateway_models(profile):
+    """Ask a gateway profile what it serves, so the list is not hardcoded."""
+    env = load_env(os.path.join(HOME, ".config", "claude-code-server", "profiles", profile + ".env"))
+    base = env.get("ANTHROPIC_BASE_URL")
+    if not base:
+        return []
+    req = urllib.request.Request(
+        base.rstrip("/") + "/v1/models",
+        headers={"Authorization": "Bearer " + env.get("ANTHROPIC_AUTH_TOKEN", "")},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.load(resp)
+        return [m.get("id") for m in payload.get("data", []) if m.get("id")]
+    except Exception:
+        return []
+
+
+def profiles():
+    root = os.path.join(HOME, ".config", "claude-code-server", "profiles")
+    try:
+        return sorted(f[:-4] for f in os.listdir(root) if f.endswith(".env"))
+    except OSError:
+        return []
+
+
+def models_for(profile):
+    """(value, label) pairs a profile can serve."""
+    if profile == "-":
+        return claude_models()
+    return [(m, m) for m in gateway_models(profile)]
+
+
+def family_of(profile, value, label):
+    """Group models so a menu is a short list of families, not forty rows."""
+    text = (value + " " + label).lower()
+    if profile == "-":
+        for word in ("opus", "sonnet", "fable", "haiku"):
+            if word in text:
+                return word.capitalize()
+        return "Varsayilan"
+    if "pro" in text:
+        return "Pro"
+    if "lite" in text:
+        return "Flash Lite"
+    if "flash" in text:
+        return "Flash"
+    return "Diger"
+
+
+def grouped(profile):
+    families = {}
+    for value, label in models_for(profile):
+        families.setdefault(family_of(profile, value, label), []).append((value, label))
+    return families
+
+
+BACK = "◀ Geri"
+TICK = "✅ "
+
+
+def provider_rows(current=None):
+    rows = [[{"text": (TICK if current == "-" else "") + "Claude",
+              "callback_data": "nav:p:-"}]]
+    for profile in profiles():
+        rows.append([{"text": (TICK if current == profile else "") + profile,
+                      "callback_data": "nav:p:" + profile}])
+    rows.append(back_row())
+    return rows
+
+
+def family_rows(profile, current_model=None):
+    families = grouped(profile)
+    # A provider with a handful of models does not need a second level.
+    if sum(len(v) for v in families.values()) <= 8:
+        rows = [[{"text": (TICK if value == current_model else "") + label,
+                  "callback_data": "set:{}:{}".format(profile, value)}]
+                for value, label in models_for(profile)]
+    else:
+        rows = []
+        for family in sorted(families, key=lambda f: (f == "Diger", f)):
+            count = len(families[family])
+            rows.append([{"text": "{} ({})".format(family, count),
+                          "callback_data": "nav:f:{}:{}".format(profile, family)}])
+    rows.append([{"text": BACK, "callback_data": "nav:root"}, back_row()[0]])
+    return rows
+
+
+def model_rows(profile, family, current_model=None):
+    rows = [[{"text": (TICK if value == current_model else "") + label,
+              "callback_data": "set:{}:{}".format(profile, value)}]
+            for value, label in grouped(profile).get(family, [])]
+    rows.append([{"text": BACK, "callback_data": "nav:p:" + profile}, back_row()[0]])
+    return rows
+
+
+
+# --------------------------------------------------------------------------- bridge
+
+
+def assistant_text(entry):
+    """Pull plain text out of one transcript entry, ignoring tool traffic."""
+    if entry.get("type") != "assistant":
+        return None
+    content = (entry.get("message") or {}).get("content")
+    if isinstance(content, str):
+        return content.strip() or None
+    if isinstance(content, list):
+        parts = [b.get("text", "") for b in content
+                 if isinstance(b, dict) and b.get("type") == "text"]
+        joined = "\n".join(p for p in parts if p.strip())
+        return joined.strip() or None
+    return None
+
+
+def user_text(entry):
+    """The other half of a transcript line: what was actually typed. Tool
+    results and the app's own bracketed notes are not conversation."""
+    if entry.get("type") != "user" or entry.get("isMeta"):
+        return None
+    content = (entry.get("message") or {}).get("content")
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+            return None
+        text = "\n".join(b.get("text", "") for b in content
+                          if isinstance(b, dict) and b.get("type") == "text")
+    else:
+        return None
+    text = text.strip()
+    if not text or text.startswith("<"):
+        return None
+    return text
+
+
+def history_text(name, turns=HISTORY_TURNS):
+    """Render the tail of a session so switching to it shows where it left off."""
+    header = "\U0001F5C2 <b>{}</b> · {}".format(esc(name), esc(session_profile(name)))
+    path = transcript_of(name)
+    if not path:
+        return header + "\n<i>Bu oturum henuz konusmadi.</i>"
+    entries = []
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as handle:
+            for line in handle:
+                try:
+                    item = json.loads(line)
+                except ValueError:
+                    continue
+                text = user_text(item)
+                if text:
+                    entries.append(("user", text))
+                    continue
+                text = assistant_text(item)
+                if text:
+                    entries.append(("bot", text))
+    except OSError:
+        pass
+    entries = entries[-turns * 2:]
+    if not entries:
+        return header + "\n<i>Bu oturum henuz konusmadi.</i>"
+    lines = [header, ""]
+    for role, text in entries:
+        if len(text) > 700:
+            text = text[:700] + " …"
+        lines.append(("\U0001F464 " if role == "user" else "\U0001F916 ") + esc(text))
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def show_session(chat_id, name, newest=None):
+    """Switching sessions replaces the screen instead of stacking onto it."""
+    wipe_chat(chat_id, newest)
+    with LOCK:
+        STATE["panel"].pop(str(chat_id), None)   # the old one just went away
+        save_state(STATE)
+    send(chat_id, history_text(name))
+    panel(chat_id, panel_text(chat_id))
+
+
+def read_from(path, offset):
+    """Return the assistant texts added since offset, and the new offset."""
+    texts = []
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as handle:
+            handle.seek(offset)
+            for line in handle:
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                text = assistant_text(entry)
+                if text:
+                    texts.append(text)
+            return texts, handle.tell()
+    except OSError:
+        return texts, offset
+
+
+def send_to_session(name, text):
+    tmux("send-keys", "-t", name, "-l", text)
+    time.sleep(0.3)
+    tmux("send-keys", "-t", name, "Enter")
+
+
+def relay_answer(chat_id, name, start_offset):
+    """Watch the transcript and forward whatever the session says back."""
+    path = transcript_of(name)
+    if not path:
+        send(chat_id, "Bu oturumun kaydi bulunamadi.")
+        return
+    began = last_new = time.time()
+    offset = start_offset
+    sent_any = False
+    nudged = False
+    while time.time() - began < REPLY_MAX:
+        time.sleep(REPLY_POLL)
+        texts, offset = read_from(path, offset)
+        for text in texts:
+            send(chat_id, esc(text))
+            sent_any = True
+            last_new = time.time()
+        if sent_any and time.time() - last_new > REPLY_QUIET:
+            panel(chat_id, panel_text(chat_id))   # keep the buttons in reach
+            return
+        if not sent_any and not nudged and time.time() - began > 180:
+            send(chat_id, "Hala calisiyor, bitince yazacagim.")
+            nudged = True
+    if not sent_any:
+        send(chat_id, "Zaman asimi - oturum cevap vermedi.")
+
+
+# --------------------------------------------------------------------------- files
+
+
+FILE_SKIP = (".git", "node_modules", "__pycache__", ".venv", "dist", "build")
+FILE_MAX = 50 * 1024 * 1024      # Telegram's ceiling for a bot upload
+FILE_LISTED = {}                 # chat -> the paths the last menu offered
+
+
+def human(size):
+    for unit in ("B", "KB", "MB"):
+        if size < 1024:
+            return "{:.0f}{}".format(size, unit)
+        size /= 1024.0
+    return "{:.1f}GB".format(size)
+
+
+def recent_files(limit=15):
+    """Whatever the session has been writing, newest first."""
+    found = []
+    for root, dirs, names in os.walk(WORKDIR):
+        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in FILE_SKIP]
+        for name in names:
+            if name.startswith("."):
+                continue
+            path = os.path.join(root, name)
+            try:
+                info = os.stat(path)
+            except OSError:
+                continue
+            if not info.st_size or info.st_size > FILE_MAX:
+                continue
+            found.append((info.st_mtime, path, info.st_size))
+    found.sort(reverse=True)
+    return found[:limit]
+
+
+def file_rows(chat_id):
+    listing = recent_files()
+    FILE_LISTED[str(chat_id)] = [path for _, path, _ in listing]
+    rows = []
+    for index, (_, path, size) in enumerate(listing):
+        rel = os.path.relpath(path, WORKDIR)
+        if len(rel) > 34:
+            rel = "…" + rel[-33:]
+        rows.append([{"text": "{}  {}".format(rel, human(size)),
+                      "callback_data": "file:{}".format(index)}])
+    if not rows:
+        rows = [[{"text": "(calisma dizininde dosya yok)", "callback_data": "noop"}]]
+    rows.append(back_row())
+    return rows
+
+
+def post_file(chat_id, path):
+    """sendDocument is multipart, which urllib will not build for us."""
+    try:
+        with open(path, "rb") as handle:
+            payload = handle.read()
+    except OSError as exc:
+        send(chat_id, "Okunamadi: {}".format(esc(exc)))
+        return
+    boundary = "----ccs{}".format(int(time.time() * 1000))
+    name = os.path.basename(path)
+    body = (
+        "--{}\r\n".format(boundary)
+        + 'Content-Disposition: form-data; name="chat_id"\r\n\r\n'
+        + "{}\r\n".format(chat_id)
+        + "--{}\r\n".format(boundary)
+        + 'Content-Disposition: form-data; name="document"; filename="{}"\r\n'.format(name)
+        + "Content-Type: application/octet-stream\r\n\r\n"
+    ).encode() + payload + "\r\n--{}--\r\n".format(boundary).encode()
+    request = urllib.request.Request(
+        API.format(TOKEN, "sendDocument"), data=body,
+        headers={"Content-Type": "multipart/form-data; boundary=" + boundary})
+    try:
+        result = json.load(urllib.request.urlopen(request, timeout=180))
+    except Exception as exc:
+        send(chat_id, "Gonderilemedi: {}".format(esc(exc)))
+        return
+    track(chat_id, ((result.get("result") or {}).get("message_id")))
+
+
+def fetch_file(chat_id, message):
+    """A file sent to the bot lands in the workspace, where the session can
+    actually open it. Telegram caps a bot download at 20 MB."""
+    doc = message.get("document")
+    photos = message.get("photo") or []
+    if doc:
+        file_id = doc["file_id"]
+        name = os.path.basename(doc.get("file_name") or "dosya")
+    elif photos:
+        file_id = photos[-1]["file_id"]
+        name = "foto-{}.jpg".format(int(time.time()))
+    else:
+        return None
+    info = api("getFile", file_id=file_id)
+    if not info.get("ok"):
+        send(chat_id, "Dosya alinamadi: {}".format(esc(info.get("description", ""))))
+        return None
+    url = "https://api.telegram.org/file/bot{}/{}".format(
+        TOKEN, info["result"]["file_path"])
+    folder = os.path.join(WORKDIR, "gelen")
+    os.makedirs(folder, exist_ok=True)
+    dest = os.path.join(folder, name.replace("/", "_").replace("\\", "_"))
+    try:
+        with urllib.request.urlopen(url, timeout=180) as source:
+            with open(dest, "wb") as handle:
+                handle.write(source.read())
+    except Exception as exc:
+        send(chat_id, "Indirilemedi: {}".format(esc(exc)))
+        return None
+    return dest
+
+
+def cmd_files(chat_id, _args):
+    panel(chat_id, "Calisma dizinindeki son dosyalar:", file_rows(chat_id))
+
+
+# --------------------------------------------------------------------------- permissions
+
+
+CHOICE = re.compile(r"^\s*[>❯]?\s*(\d)[.)]\s+(.{2,60})")
+PROMPT_HINTS = ("do you want", "proceed", "allow this", "onayl")
+
+
+def pane_choices(name):
+    """If the session is sitting on a numbered prompt, return its options."""
+    pane = tmux("capture-pane", "-p", "-t", name)
+    tail = pane.splitlines()[-25:]
+    lowered = [line.lower() for line in tail]
+    if not any(hint in line for line in lowered for hint in PROMPT_HINTS):
+        return None, None
+    options = []
+    for line in tail:
+        match = CHOICE.match(line)
+        if match:
+            options.append((match.group(1), match.group(2).strip()))
+    if not options:
+        return None, None
+    question = next((line.strip() for line, low in zip(tail, lowered)
+                     if any(hint in low for hint in PROMPT_HINTS)), "Onay")
+    return question, options
+
+
+def permission_watcher():
+    """Offer remote approval when a session stops on a prompt. Optional."""
+    seen = {}
+    while True:
+        time.sleep(3)
+        if not STATE.get("relay_permissions", True):
+            continue
+        try:
+            live = tmux_sessions()
+            for chat_id, name in list(STATE["active"].items()):
+                if name not in live:
+                    continue
+                question, options = pane_choices(name)
+                if not options:
+                    seen.pop(name, None)
+                    continue
+                fingerprint = question + "|".join(k for k, _ in options)
+                if seen.get(name) == fingerprint:
+                    continue
+                seen[name] = fingerprint
+                keyboard = [[{"text": "{}. {}".format(key, label[:40]),
+                              "callback_data": "answer:{}:{}".format(name, key)}]
+                            for key, label in options]
+                send(int(chat_id),
+                     "\U0001F513 <b>{}</b>\n<i>{}</i>".format(esc(question), esc(name)),
+                     keyboard=keyboard)
+        except Exception as exc:
+            sys.stderr.write("permission watcher: {}\n".format(exc))
+
+
+# --------------------------------------------------------------------------- commands
+
+
+HELP = """<b>Komutlar</b>
+
+/sessions - oturumlari listele, dokunarak gec
+/model - model ve saglayici sec
+/mode - izin modu (auto / acceptEdits / manual / plan)
+/new &lt;konu&gt; - yeni oturum ac
+/close - aktif oturumu kapat
+/perms - onay butonlarini ac/kapat
+/status - durum
+
+Komut olmayan her mesaj aktif oturuma gider."""
+
+
+
+MENU_BUTTON = "☰ Menu"
+
+
+def main_panel():
+    return [
+        [{"text": "🗂 Oturumlar", "callback_data": "nav:sessions"},
+         {"text": "🧠 Model", "callback_data": "nav:root"}],
+        [{"text": "➕ Yeni oturum", "callback_data": "do:new"},
+         {"text": "❌ Kapat", "callback_data": "do:closeask"}],
+        [{"text": "⚙ Izin modu", "callback_data": "nav:mode"},
+         {"text": "🔓 Onaylar", "callback_data": "do:perms"}],
+        [{"text": "📎 Dosyalar", "callback_data": "do:files"},
+         {"text": "ℹ Durum", "callback_data": "do:status"}],
+    ]
+
+
+def back_row():
+    return [{"text": MENU_BUTTON, "callback_data": "nav:menu"}]
+
+
+def panel_text(chat_id):
+    name = active_session(chat_id)
+    if not name:
+        return "Aktif oturum yok."
+    return "Aktif: <b>{}</b> · {}".format(esc(name), esc(session_profile(name)))
+
+
+def session_keyboard(action, current=None):
+    rows = []
+    for name in ccs_sessions():
+        profile = session_profile(name)
+        tag = "" if profile == "-" else " · {}".format(profile)
+        mark = "✅ " if name == current else ""
+        rows.append([{"text": mark + name + tag,
+                      "callback_data": "{}:{}".format(action, name)}])
+    rows.append(back_row())
+    return rows
+
+
+def cmd_sessions(chat_id, _args):
+    current = active_session(chat_id) or "(yok)"
+    panel(chat_id, "Aktif: <b>{}</b>\nGecmek istedigini sec:".format(esc(current)),
+          session_keyboard("use", active_session(chat_id)))
+
+
+def cmd_model(chat_id, _args):
+    name = active_session(chat_id)
+    if not name:
+        send(chat_id, "Once bir oturum sec: /sessions")
+        return
+    panel(chat_id, "<b>{}</b> icin model sec.\nSecim oturumu yeniden baslatir, "
+                   "konusma korunur.".format(esc(name)), provider_rows())
+
+
+def cmd_mode(chat_id, _args):
+    rows = [[{"text": mode, "callback_data": "mode:" + mode}]
+            for mode in ("auto", "acceptEdits", "manual", "plan")]
+    rows.append(back_row())
+    panel(chat_id, "Izin modu sec:", rows)
+
+
+def next_auto_name():
+    taken = set(ccs_sessions())
+    number = 1
+    while True:
+        candidate = "{}-{:02d}".format(PREFIX, number)
+        if candidate not in taken and not any(t.startswith(candidate + "-") for t in taken):
+            return candidate
+        number += 1
+
+
+def open_session(chat_id, topic=None):
+    """No typing required: with no topic we let the pool name it by number, and
+    it renames itself after the first message anyway."""
+    before = set(ccs_sessions())
+    if topic:
+        ccs("ccs-new", *topic.split())
+    else:
+        ccs("ccs-pool.sh")
+        if not set(ccs_sessions()) - before:
+            ccs("ccs-new", next_auto_name().replace(PREFIX + "-", ""))
+    _CACHE.pop("sessions", None)
+    fresh = [n for n in ccs_sessions() if n not in before]
+    name = fresh[0] if fresh else active_session(chat_id)
+    if name:
+        set_active(chat_id, name)
+    return name
+
+
+def cmd_new(chat_id, args):
+    name = open_session(chat_id, args or None)
+    if name:
+        show_session(chat_id, name)
+    else:
+        panel(chat_id, "Oturum acilamadi.")
+
+
+def cmd_close(chat_id, _args):
+    name = active_session(chat_id)
+    if not name:
+        send(chat_id, "Aktif oturum yok.")
+        return
+    ccs("ccs-close", name)
+    _CACHE.pop("sessions", None)
+    panel(chat_id, "Kapatildi: <b>{}</b>".format(esc(name)),
+          session_keyboard("use", None))
+    with LOCK:
+        STATE["active"].pop(str(chat_id), None)
+        save_state(STATE)
+
+
+def cmd_perms(chat_id, _args):
+    with LOCK:
+        STATE["relay_permissions"] = not STATE.get("relay_permissions", True)
+        save_state(STATE)
+    panel(chat_id, "Onay butonlari: <b>{}</b>".format(
+        "acik" if STATE["relay_permissions"] else "kapali"))
+
+
+def status_text(chat_id):
+    name = active_session(chat_id)
+    lines = ["<b>Durum</b>",
+             "aktif oturum: {}".format(esc(name or "yok"))]
+    if name:
+        lines.append("profil: {}".format(esc(session_profile(name))))
+    lines.append("onay butonlari: {}".format(
+        "acik" if STATE.get("relay_permissions", True) else "kapali"))
+    lines.append("")
+    lines.append("<pre>{}</pre>".format(esc(ccs("ccs-list"))))
+    return "\n".join(lines)
+
+
+def cmd_status(chat_id, _args):
+    panel(chat_id, status_text(chat_id))
+
+
+COMMANDS = {
+    "start": lambda chat, args: panel(chat, panel_text(chat)),
+    "help": lambda chat, args: panel(chat, HELP),
+    "menu": lambda chat, args: panel(chat, panel_text(chat)),
+    "files": cmd_files,
+    "sessions": cmd_sessions,
+    "model": cmd_model,
+    "mode": cmd_mode,
+    "new": cmd_new,
+    "close": cmd_close,
+    "perms": cmd_perms,
+    "status": cmd_status,
+}
+
+
+def register_menu():
+    commands = [
+        {"command": "menu", "description": "Ana panel - her sey buton"},
+        {"command": "sessions", "description": "Oturumlar - dokunarak gec"},
+        {"command": "model", "description": "Model ve saglayici sec"},
+        {"command": "mode", "description": "Izin modu"},
+        {"command": "new", "description": "Yeni oturum ac"},
+        {"command": "close", "description": "Aktif oturumu kapat"},
+        {"command": "perms", "description": "Onay butonlarini ac/kapat"},
+        {"command": "files", "description": "Dosyalari gonder"},
+        {"command": "status", "description": "Durum"},
+        {"command": "help", "description": "Yardim"},
+    ]
+    # The channel plugin registers its own three commands; overwrite both scopes
+    # so a stale list cannot linger on the client.
+    for scope in ({"type": "default"}, {"type": "all_private_chats"}):
+        api("setMyCommands", commands=commands, scope=scope)
+
+
+# --------------------------------------------------------------------------- dispatch
+
+
+def set_profile_model(profile, model):
+    path = os.path.join(HOME, ".config", "claude-code-server", "profiles", profile + ".env")
+    if not os.path.exists(path):
+        return
+    kept = [line for line in open(path, encoding="utf-8").read().splitlines()
+            if not line.startswith("CCS_PROFILE_MODEL=")]
+    if model:
+        kept.append("CCS_PROFILE_MODEL=" + model)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(kept) + "\n")
+
+
+def set_pool_model(model):
+    path = os.path.join(HOME, ".config", "claude-code-server", "config")
+    text = open(path, encoding="utf-8").read()
+    if re.search(r"^CCS_MODEL=", text, flags=re.M):
+        text = re.sub(r"^CCS_MODEL=.*$", 'CCS_MODEL="{}"'.format(model), text, flags=re.M)
+    else:
+        text += '\nCCS_MODEL="{}"\n'.format(model)
+    open(path, "w", encoding="utf-8").write(text)
+
+
+def set_pool_mode(mode):
+    path = os.path.join(HOME, ".config", "claude-code-server", "config")
+    text = open(path, encoding="utf-8").read()
+    if re.search(r"^CCS_PERMISSION_MODE=", text, flags=re.M):
+        text = re.sub(r"^CCS_PERMISSION_MODE=.*$", "CCS_PERMISSION_MODE=" + mode,
+                      text, flags=re.M)
+    else:
+        text += "\nCCS_PERMISSION_MODE={}\n".format(mode)
+    open(path, "w", encoding="utf-8").write(text)
+
+
+def pane_ready(name):
+    """A tmux session exists well before Claude Code has finished loading a
+    resumed conversation. Typing into that gap loses the message, or gets an
+    answer from a session that has not read its own history yet."""
+    tail = tmux("capture-pane", "-p", "-t", name).splitlines()[-8:]
+    if any(re.search(r'to interrupt', line, re.I) for line in tail):
+        return False
+    return any(re.match(r'^\s*[>\u276f]', line) for line in tail)
+
+
+def wait_ready(name, limit=45.0):
+    began = time.time()
+    while time.time() - began < limit:
+        if pane_ready(name):
+            return True
+        time.sleep(1.0)
+    return False
+
+
+def wait_for_session(name, limit=90.0):
+    """ccs-profile kills and resumes in the background; poll instead of sleeping."""
+    began = time.time()
+    gone = False
+    while time.time() - began < limit:
+        _CACHE.pop("sessions", None)
+        present = name in tmux_sessions()
+        if not present:
+            gone = True
+        elif gone and pane_ready(name):
+            return True
+        time.sleep(1.0)
+    return name in tmux_sessions() and pane_ready(name)
+
+
+def describe(profile, model):
+    """How a backend choice should read back to the user."""
+    where = "Claude" if profile == "-" else profile
+    return "{} · {}".format(where, model or "varsayilan")
+
+
+def handle_callback(query):
+    chat_id = query["message"]["chat"]["id"]
+    message_id = query["message"]["message_id"]
+    data = query.get("data", "")
+    api("answerCallbackQuery", callback_query_id=query["id"])
+    if data == "noop":
+        return
+    action, _, rest = data.partition(":")
+
+    if action == "do":
+        name = active_session(chat_id)
+        if rest == "new":
+            edit(chat_id, message_id, "Yeni oturum aciliyor…")
+            fresh = open_session(chat_id)
+            if fresh:
+                show_session(chat_id, fresh, newest=message_id)
+            else:
+                edit(chat_id, message_id, "Oturum acilamadi.", keyboard=main_panel())
+        elif rest == "closeask":
+            if not name:
+                edit(chat_id, message_id, "Aktif oturum yok.", keyboard=main_panel())
+                return
+            edit(chat_id, message_id, "<b>{}</b> kapatilsin mi?".format(esc(name)),
+                 keyboard=[[{"text": "✔ Evet, kapat", "callback_data": "do:close"},
+                            {"text": "✖ Vazgec", "callback_data": "nav:menu"}]])
+        elif rest == "close":
+            if name:
+                ccs("ccs-close", name)
+                _CACHE.pop("sessions", None)
+                with LOCK:
+                    STATE["active"].pop(str(chat_id), None)
+                    save_state(STATE)
+            edit(chat_id, message_id, "Kapatildi: <b>{}</b>".format(esc(name or "-")),
+                 keyboard=main_panel())
+        elif rest == "perms":
+            with LOCK:
+                STATE["relay_permissions"] = not STATE.get("relay_permissions", True)
+                save_state(STATE)
+            edit(chat_id, message_id, "Onay butonlari: <b>{}</b>".format(
+                "acik" if STATE["relay_permissions"] else "kapali"), keyboard=main_panel())
+        elif rest == "files":
+            edit(chat_id, message_id, "Calisma dizinindeki son dosyalar:",
+                 keyboard=file_rows(chat_id))
+        elif rest == "status":
+            edit(chat_id, message_id, status_text(chat_id), keyboard=main_panel())
+        return
+
+    if action == "nav":
+        name = active_session(chat_id)
+        kind, _, arg = rest.partition(":")
+        if kind == "menu":
+            edit(chat_id, message_id, panel_text(chat_id), keyboard=main_panel())
+        elif kind == "sessions":
+            edit(chat_id, message_id, "Oturum sec:",
+                 keyboard=session_keyboard("use", name))
+        elif kind == "mode":
+            rows = [[{"text": m, "callback_data": "mode:" + m}]
+                    for m in ("auto", "acceptEdits", "manual", "plan")]
+            rows.append(back_row())
+            edit(chat_id, message_id, "Izin modu sec:", keyboard=rows)
+        elif kind == "root":
+            edit(chat_id, message_id, "Saglayici sec:",
+                 keyboard=provider_rows(session_profile(name) if name else None))
+        elif kind == "p":
+            edit(chat_id, message_id, "<b>{}</b> - model ailesi sec:".format(esc(arg)),
+                 keyboard=family_rows(arg))
+        elif kind == "f":
+            profile, _, family = arg.partition(":")
+            edit(chat_id, message_id, "<b>{}</b> / {} - model sec:".format(
+                esc(profile), esc(family)), keyboard=model_rows(profile, family))
+        return
+
+    if action == "use":
+        set_active(chat_id, rest)
+        show_session(chat_id, rest, newest=message_id)
+
+    elif action == "set":
+        profile, _, model = rest.partition(":")
+        name = active_session(chat_id)
+        if not name:
+            edit(chat_id, message_id, "Aktif oturum yok.")
+            return
+        if profile == "-":
+            set_pool_model(model)
+        else:
+            set_profile_model(profile, model)
+        edit(chat_id, message_id,
+             "<b>{}</b> → {}\nYeniden baslatiliyor, konusma korunur…".format(
+                 esc(name), esc(describe(profile, model))))
+        ccs("ccs-profile", profile, name)
+        ok = wait_for_session(name)
+        edit(chat_id, message_id,
+             ("Hazir: <b>{}</b> → {}" if ok else
+              "Yeniden baslatilamadi: <b>{}</b> ({})").format(
+                 esc(name), esc(describe(profile, model))),
+             keyboard=main_panel())
+
+    elif action == "mode":
+        name = active_session(chat_id)
+        if not name:
+            edit(chat_id, message_id, "Aktif oturum yok.")
+            return
+        set_pool_mode(rest)
+        edit(chat_id, message_id,
+             "Izin modu: <b>{}</b>\n<b>{}</b> yeniden baslatiliyor…".format(
+                 esc(rest), esc(name)))
+        ccs("ccs-profile", session_profile(name), name)
+        wait_for_session(name)
+        edit(chat_id, message_id,
+             "Hazir: <b>{}</b> · izin modu <b>{}</b>".format(esc(name), esc(rest)),
+             keyboard=main_panel())
+
+    elif action == "file":
+        listing = FILE_LISTED.get(str(chat_id)) or []
+        try:
+            path = listing[int(rest)]
+        except (ValueError, IndexError):
+            edit(chat_id, message_id, "Liste eskimis, tekrar ac.", keyboard=main_panel())
+            return
+        api("sendChatAction", chat_id=chat_id, action="upload_document")
+        post_file(chat_id, path)
+        panel(chat_id, panel_text(chat_id))
+
+    elif action == "answer":
+        name, _, key = rest.partition(":")
+        tmux("send-keys", "-t", name, key)
+        time.sleep(0.2)
+        tmux("send-keys", "-t", name, "Enter")
+        edit(chat_id, message_id, "Yanit gonderildi: <b>{}</b>".format(esc(key)))
+
+
+def handle_message(message):
+    chat_id = message["chat"]["id"]
+    sender = str(message.get("from", {}).get("id", ""))
+    allowed = allowed_users()
+    if allowed and sender not in allowed:
+        return
+    track(chat_id, message.get("message_id"))
+    text = (message.get("text") or message.get("caption") or "").strip()
+
+    if message.get("document") or message.get("photo"):
+        saved = fetch_file(chat_id, message)
+        if not saved:
+            return
+        session = active_session(chat_id)
+        if not session:
+            send(chat_id, "Kaydedildi: <code>{}</code>".format(esc(saved)))
+            return
+        text = "Su dosya calisma dizinine geldi: {}{}".format(
+            saved, ("\n\n" + text) if text else "")
+
+    if not text:
+        return
+
+    if text.startswith("/"):
+        name, _, args = text[1:].partition(" ")
+        handler = COMMANDS.get(name.split("@")[0])
+        if handler:
+            handler(chat_id, args.strip())
+        else:
+            send(chat_id, "Bilinmeyen komut. /help")
+        return
+
+    session = active_session(chat_id)
+    if not session:
+        send(chat_id, "Aktif oturum yok. /sessions ile sec veya /new ile ac.")
+        return
+    path = transcript_of(session)
+    offset = os.path.getsize(path) if path and os.path.exists(path) else 0
+    api("sendChatAction", chat_id=chat_id, action="typing")
+    if not pane_ready(session) and not wait_ready(session):
+        send(chat_id, "Oturum hala mesgul, mesaj gonderilmedi. Birazdan tekrar dene.")
+        return
+    send_to_session(session, text)
+    threading.Thread(target=relay_answer, args=(chat_id, session, offset),
+                     daemon=True).start()
+
+
+def dispatch(update):
+    """One thread per update: a nine second restart must not freeze the menus."""
+    try:
+        if "message" in update:
+            handle_message(update["message"])
+        elif "callback_query" in update:
+            handle_callback(update["callback_query"])
+    except Exception as exc:
+        sys.stderr.write("update failed: {}\n".format(exc))
+
+
+def main():
+    register_menu()
+    threading.Thread(target=permission_watcher, daemon=True).start()
+    offset = None
+    while True:
+        params = {"timeout": POLL_TIMEOUT,
+                  "allowed_updates": ["message", "callback_query"]}
+        if offset is not None:
+            params["offset"] = offset
+        result = api("getUpdates", **params)
+        if not result.get("ok"):
+            time.sleep(5)
+            continue
+        for update in result.get("result", []):
+            offset = update["update_id"] + 1
+            threading.Thread(target=dispatch, args=(update,), daemon=True).start()
+
+
+if __name__ == "__main__":
+    main()

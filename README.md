@@ -46,6 +46,11 @@ somebody is typing into. That is what this is.
   your phone.
 - **A bounded pool.** `CCS_MAX_SESSIONS` stops a small machine from being eaten
   by claude processes.
+- **A phone that does not depend on one vendor.** A Telegram bot drives the
+  pool without going through a model, so it still works on the day your Claude
+  subscription lapses.
+- **Swappable backends.** A session can be moved onto another provider through
+  a local gateway and keeps its conversation.
 
 ## Requirements
 
@@ -139,6 +144,98 @@ them. If more were open than `CCS_MAX_SESSIONS` allows, the rest are left for
 | `CCS_MAX_SESSIONS` | `4` | Each session is a separate claude process |
 | `CCS_AUTO_RENAME` | `1` | `0` disables topic renaming |
 | `CCS_PANE_WIDTH` / `CCS_PANE_HEIGHT` | `200` / `50` | Detached pane size |
+| `CCS_MODEL` | empty | `--model` for every session the pool starts |
+| `CCS_PERMISSION_MODE` | empty | `auto`, `acceptEdits`, `plan`, `manual` |
+| `CCS_DEFAULT_PROFILE` | `-` | Backend for new sessions; `-` is your Claude login |
+| `CCS_CHANNEL` / `CCS_CHANNEL_SESSION` | empty | Channels bridge, experimental |
+
+## Driving it from a phone
+
+There are two ways in, and they fail differently, so it is worth having both.
+
+**Remote Control** is Claude Code's own feature and needs nothing from this
+project: every session the pool starts passes `--remote-control <name>`, and the
+Claude apps pick them up. It is by far the nicer surface — streaming answers,
+tool calls, diffs, real markdown. It authenticates against Anthropic, though,
+which means it goes away the moment you point the session at another provider.
+
+**`ccs-bot`** is the fallback, and the reason it exists is that last sentence.
+It is a Telegram bot that runs beside the pool as its own systemd unit.
+
+```
+🗂 Oturumlar     🧠 Model
+➕ Yeni oturum   ❌ Kapat
+⚙ Izin modu      🔓 Onaylar
+📎 Dosyalar      ℹ Durum
+```
+
+What it does:
+
+- Switch between sessions. Switching clears the chat and replays the tail of
+  that session's transcript, so the screen matches the session you are in.
+- Pick a provider and a model, category by category rather than forty buttons
+  at once. Choosing one restarts the session and resumes the conversation.
+- Open and close sessions, change permission mode, send files out of the
+  workspace and drop files into it.
+- Relay permission prompts as buttons when a session stops to ask. Optional,
+  and off is a reasonable setting if you run in `auto`.
+
+Anything that is not a command is typed into the active session, and the answer
+is read back out of the transcript.
+
+**None of this goes through a model.** Commands run `ccs-*` and `tmux`
+directly. That is deliberate rather than frugal: you reach for the model menu
+exactly when the model is unreachable, so the control path must not need one.
+It also means the bot costs no tokens.
+
+Setting it up:
+
+```sh
+# talk to @BotFather, then:
+mkdir -p ~/.claude/channels/telegram
+echo 'TELEGRAM_BOT_TOKEN=...' > ~/.claude/channels/telegram/.env
+chmod 600 ~/.claude/channels/telegram/.env
+
+# only these Telegram user ids may talk to it
+echo '{"allowFrom": [123456789]}' > ~/.claude/channels/telegram/access.json
+
+systemctl --user enable --now ccs-bot
+```
+
+Two Telegram limits are worth knowing: a bot can delete messages for 48 hours
+and no longer, and it can upload 50 MB and download 20 MB. Running your own
+Bot API server raises the transfer limits to 2 GB.
+
+## Backends
+
+A backend is chosen by environment variables that Claude Code reads at startup,
+so switching one means relaunching the session. `ccs-profile` does that and
+resumes the conversation, so history carries over.
+
+A profile is a plain env file at `~/.config/claude-code-server/profiles/<name>.env`:
+
+```sh
+ANTHROPIC_BASE_URL=http://127.0.0.1:4000
+ANTHROPIC_AUTH_TOKEN=whatever-your-gateway-wants
+ANTHROPIC_API_KEY=
+CCS_PROFILE_MODEL=gemini-flash
+```
+
+```sh
+ccs-profile                     # list profiles and what each session uses
+ccs-profile gemini my-session   # move a session onto one
+ccs-profile -                   # back to your Claude login
+```
+
+Anything that speaks the Anthropic Messages API works. We use
+[LiteLLM](https://github.com/BerriAI/litellm) in front of Gemini.
+`ccs-gateway-sync` asks the provider which models your key can actually call,
+drops the ones that are not for conversation, writes the gateway config and
+restarts it — hardcoding model names goes stale the week a provider ships a new
+one.
+
+The trade-off is the one from the previous section: on another provider you keep
+the sessions, the pool and the bot, and you lose Remote Control.
 
 ## How it works
 
@@ -195,6 +292,29 @@ message on their phone, your keystrokes land in their draft. `ccs_idle()`
 refuses to type when Claude is generating or when the prompt is not empty, and
 the pool retries on the next tick.
 
+### A session record is more than its id
+
+The pool remembers a session as `<name>.uuid`, and once backends arrived, also
+as `<name>.profile`. Renaming moved the first and left the second; closing
+deleted the first and left the second. Neither looked like a bug, because
+nothing failed.
+
+It surfaces later. Auto names get reused — close `host-03` and the next session
+is called `host-03` again — and it inherits a profile file nobody remembers
+writing. You ask for Claude and quietly get whatever the last tenant used.
+Rename and close now move and delete the whole record.
+
+### A tmux session exists before Claude is ready
+
+After `ccs-profile` restarts a session, tmux has it back in about a second.
+Claude Code is still reading the transcript for several more. Waiting for the
+tmux session to reappear and then typing gets you an answer from a session that
+has not read its own history yet — it will cheerfully tell you the thing you
+just told it never came up.
+
+Wait for the pane instead: a prompt line present and no "to interrupt" in the
+last few rows.
+
 ### Remote Control is on by default
 
 Recent Claude Code versions enable Remote Control for every session; `/status`
@@ -220,6 +340,10 @@ machine in your house. Be deliberate about it.
 - **Auto mode runs most commands without asking.** A vague instruction typed on
   a phone can do more than you meant. Say what you want precisely, or turn auto
   mode off.
+- **Fill in the bot's allowlist.** Anyone who finds a Telegram bot can message
+  it. `~/.claude/channels/telegram/access.json` is what stops them; with no
+  `allowFrom` the bot answers whoever writes to it. The token file deserves
+  `chmod 600` for the same reason.
 
 ## License
 

@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Switch which backend a session talks to.
+#
+#   ccs-profile                    list profiles and show what each session uses
+#   ccs-profile <name>             switch the session you are in, or the channel one
+#   ccs-profile <name> <session>   switch a named session
+#   ccs-profile -                  go back to Claude Code's own login
+#
+# A backend is chosen by environment variables read at process start, so
+# switching means relaunching the session. The conversation is resumed, so
+# history carries over and a chat bridge reconnects on the same bot.
+set -uo pipefail
+
+CCS_BIN="$(dirname "$(readlink -f "$0")")"
+# shellcheck source=ccs-common.sh
+. "$CCS_BIN/ccs-common.sh"
+
+list() {
+  printf '%-16s %s\n' "PROFILE" "BACKEND"
+  printf '%-16s %s\n' "----------------" "------------------------------------------"
+  printf '%-16s %s\n' "-" "Claude Code login (default)"
+  local p url
+  for p in $(ccs_profiles); do
+    url=$(grep -E '^ANTHROPIC_BASE_URL=' "$CCS_PROFILES/$p.env" 2>/dev/null | head -1 | cut -d= -f2-)
+    printf '%-16s %s\n' "$p" "${url:-(no ANTHROPIC_BASE_URL set)}"
+  done
+  echo
+  printf '%-40s %s\n' "SESSION" "PROFILE"
+  printf '%-40s %s\n' "----------------------------------------" "----------------"
+  for p in $(ccs_sessions); do
+    printf '%-40s %s\n' "$p" "$(ccs_profile_of "$p")"
+  done
+}
+
+target_session() {
+  # Inside a session? Switch that one. Otherwise the channel session.
+  if [ -n "${TMUX:-}" ]; then
+    tmux display-message -p '#{session_name}' 2>/dev/null && return 0
+  fi
+  ccs_channel_name 2>/dev/null && return 0
+  return 1
+}
+
+[ $# -eq 0 ] && { list; exit 0; }
+
+profile="$1"
+session="${2:-}"
+[ -z "$session" ] && session=$(target_session)
+
+if [ -z "$session" ]; then
+  echo "Which session? Pass one, or run this from inside a session." >&2
+  echo >&2
+  list >&2
+  exit 1
+fi
+
+if [ "$profile" != "-" ] && [ ! -f "$CCS_PROFILES/$profile.env" ]; then
+  echo "No profile named '$profile'." >&2
+  echo >&2
+  list >&2
+  exit 1
+fi
+
+uuid_file="$CCS_POOLDIR/${session}.uuid"
+if [ ! -f "$uuid_file" ]; then
+  echo "'$session' is not a session this pool manages." >&2
+  exit 1
+fi
+uuid=$(cat "$uuid_file")
+
+channel=""
+if [ "$session" = "$(ccs_channel_name 2>/dev/null)" ]; then
+  channel="$CCS_CHANNEL"
+fi
+
+ccs_set_profile "$session" "$profile"
+ccs_log "profile: $session -> $profile"
+
+# Relaunching kills the process this may be running inside, so do it detached
+# and give the current turn a moment to finish reporting.
+nohup setsid bash -c "
+  sleep 4
+  tmux kill-session -t '$session' 2>/dev/null
+  sleep 2
+  . '$CCS_BIN/ccs-common.sh'
+  ccs_resume '$session' '$uuid' '$channel'
+" >/dev/null 2>&1 &
+
+if [ "$profile" = "-" ]; then
+  echo "Switching '$session' back to the Claude Code login."
+else
+  echo "Switching '$session' to profile '$profile'."
+fi
+echo "It restarts in a few seconds with the conversation resumed."
+[ -n "$channel" ] && echo "The chat bridge reconnects on the same bot."

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Launch claude under a backend profile.
+#
+#   ccs-launch <profile|-> <claude args...>
+#
+# A profile is a plain env file at ~/.config/claude-code-server/profiles/<name>.env.
+# Use "-" for no profile, which means Claude Code's own login and models.
+#
+# Backends are chosen by environment (ANTHROPIC_BASE_URL and friends), and the
+# environment is fixed when the process starts. That is why switching backends
+# means relaunching the session rather than flipping a setting inside it.
+set -uo pipefail
+
+profile="${1:--}"
+shift || true
+
+if [ "$profile" != "-" ]; then
+  file="${CCS_PROFILES:-$HOME/.config/claude-code-server/profiles}/${profile}.env"
+  if [ -f "$file" ]; then
+    set -a
+    # shellcheck source=/dev/null
+    . "$file"
+    set +a
+  else
+    printf 'ccs-launch: no profile named %s at %s\n' "$profile" "$file" >&2
+    printf 'Falling back to the default backend.\n' >&2
+    sleep 2
+  fi
+fi
+
+export PATH="$HOME/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+# A profile can name the model to ask for, which matters for gateways where the
+# model name is whatever the gateway config calls it. It wins over any --model
+# the pool already put on the command line.
+if [ -n "${CCS_PROFILE_MODEL:-}" ]; then
+  args=()
+  skip=0
+  for a in "$@"; do
+    if [ "$skip" = 1 ]; then skip=0; continue; fi
+    if [ "$a" = "--model" ]; then skip=1; continue; fi
+    args+=("$a")
+  done
+  set -- "${args[@]}" --model "$CCS_PROFILE_MODEL"
+fi
+
+exec claude "$@"

@@ -11,17 +11,54 @@
 : "${CCS_PANE_WIDTH:=200}"
 : "${CCS_PANE_HEIGHT:=50}"
 
+# Channels (experimental in Claude Code). A messaging bridge that injects
+# messages into a session, so you can drive it from Telegram, Discord, and so
+# on. One session at a time per bot token: two sessions sharing a token fight
+# over the same message stream, so this is a single dedicated session.
+: "${CCS_CHANNEL:=}"           # e.g. plugin:telegram@claude-plugins-official
+: "${CCS_CHANNEL_SESSION:=}"   # name suffix, e.g. telegram -> myhost-telegram
+
+# Model and permission mode, passed to every session this pool starts.
+#
+# Permission mode matters more than it looks when you drive a session from a
+# chat app. The official channel plugins relay permission prompts, so whatever
+# Claude has to ask about shows up on your phone where you can approve or deny
+# it. Under "auto" it rarely asks, so you see the answer and never the work.
+# "acceptEdits" is a good middle ground: edits go through, commands prompt.
+: "${CCS_DEFAULT_PROFILE:=-}"  # backend profile for new sessions, "-" = Claude Code login
+: "${CCS_MODEL:=}"             # opus | sonnet | fable | a full model name
+: "${CCS_PERMISSION_MODE:=}"   # auto | acceptEdits | manual | plan | dontAsk
+
+# Flags shared by ccs_start and ccs_resume.
+ccs_extra_flags() {
+  local out=""
+  [ -n "$CCS_MODEL" ] && out="$out --model $CCS_MODEL"
+  [ -n "$CCS_PERMISSION_MODE" ] && out="$out --permission-mode $CCS_PERMISSION_MODE"
+  printf '%s' "$out"
+}
+
 CCS_CONF="${CCS_CONF:-$HOME/.config/claude-code-server/config}"
 # shellcheck source=/dev/null
 [ -f "$CCS_CONF" ] && . "$CCS_CONF"
 
 export PATH="$HOME/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
+CCS_BINDIR="${CCS_BINDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 CCS_STATE="$HOME/.claude/claude-code-server"
 CCS_POOLDIR="$CCS_STATE/sessions"
 CCS_MARKDIR="$CCS_STATE/renamed"
 CCS_LOG="$CCS_STATE/pool.log"
-mkdir -p "$CCS_POOLDIR" "$CCS_MARKDIR"
+CCS_PROFILES="${CCS_PROFILES:-$HOME/.config/claude-code-server/profiles}"
+mkdir -p "$CCS_POOLDIR" "$CCS_MARKDIR" "$CCS_PROFILES"
+
+# Which backend profile a session runs under. "-" means Claude Code's own login.
+ccs_profile_of() {
+  local f="$CCS_POOLDIR/${1}.profile"
+  [ -f "$f" ] && cat "$f" || printf '%s' "${CCS_DEFAULT_PROFILE:--}"
+}
+ccs_set_profile() { printf '%s
+' "$2" > "$CCS_POOLDIR/${1}.profile"; }
+ccs_profiles() { ls -1 "$CCS_PROFILES"/*.env 2>/dev/null | xargs -rn1 basename 2>/dev/null | sed 's/\.env$//'; }
 
 # Claude Code keeps transcripts in a directory named after the working
 # directory with every "/" replaced by "-":  /home/me/work -> -home-me-work
@@ -41,23 +78,31 @@ ccs_adddirs() {
 # deterministic. Do not try to read the session id off the terminal instead:
 # tmux wraps long lines and you will silently capture a truncated id.
 ccs_start() {
-  local name="$1" uuid
+  local name="$1" channel="${2:-}" uuid chan=""
   uuid=$(cat /proc/sys/kernel/random/uuid)
+  [ -n "$channel" ] && chan=" --channels $channel"
   # shellcheck disable=SC2086
   tmux new-session -d -s "$name" -x "$CCS_PANE_WIDTH" -y "$CCS_PANE_HEIGHT" -c "$CCS_WORKDIR" \
-    "claude --session-id $uuid --remote-control $name$(ccs_adddirs)"
+    "$CCS_BINDIR/ccs-launch $(ccs_profile_of "$name") --session-id $uuid --remote-control $name$chan$(ccs_extra_flags)$(ccs_adddirs)"
   printf '%s\n' "$uuid" > "$CCS_POOLDIR/${name}.uuid"
-  ccs_log "started: $name (session-id $uuid)"
+  ccs_log "started: $name (session-id $uuid)${channel:+ [channel]}"
+}
+
+# Name of the dedicated channel session, or failure when channels are off.
+ccs_channel_name() {
+  [ -n "$CCS_CHANNEL" ] && [ -n "$CCS_CHANNEL_SESSION" ] || return 1
+  printf '%s-%s\n' "$CCS_PREFIX" "$CCS_CHANNEL_SESSION"
 }
 
 # Bring an existing conversation back under Remote Control. Claude Code reuses
 # the same bridge session id when resuming, so the chat reappears at the URL it
 # already had: an archived conversation in the apps becomes live again.
 ccs_resume() {
-  local name="$1" uuid="$2"
+  local name="$1" uuid="$2" channel="${3:-}" chan=""
+  [ -n "$channel" ] && chan=" --channels $channel"
   # shellcheck disable=SC2086
   tmux new-session -d -s "$name" -x "$CCS_PANE_WIDTH" -y "$CCS_PANE_HEIGHT" -c "$CCS_WORKDIR" \
-    "claude --resume $uuid --remote-control $name$(ccs_adddirs)"
+    "$CCS_BINDIR/ccs-launch $(ccs_profile_of "$name") --resume $uuid --remote-control $name$chan$(ccs_extra_flags)$(ccs_adddirs)"
   printf '%s\n' "$uuid" > "$CCS_POOLDIR/${name}.uuid"
   ccs_log "resumed: $name ($uuid)"
 }

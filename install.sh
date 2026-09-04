@@ -29,7 +29,7 @@ command -v systemctl >/dev/null || die "this installer targets systemd systems"
 
 # --------------------------------------------------------------- install ----
 say "Installing to $DEST"
-mkdir -p "$DEST" "$BINDIR" "$UNITDIR" "$CONFDIR"
+mkdir -p "$DEST" "$BINDIR" "$UNITDIR" "$CONFDIR" "$CONFDIR/profiles"
 rm -rf "$DEST/bin"
 cp -r "$SRC/bin" "$DEST/bin"
 chmod +x "$DEST"/bin/*
@@ -37,8 +37,11 @@ chmod +x "$DEST"/bin/*
 ln -sf "$DEST/bin/ccs-new"    "$BINDIR/ccs-new"
 ln -sf "$DEST/bin/ccs-list"   "$BINDIR/ccs-list"
 ln -sf "$DEST/bin/ccs-resume" "$BINDIR/ccs-resume"
-ln -sf "$DEST/bin/ccs-close"  "$BINDIR/ccs-close"
-say "Linked ccs-new, ccs-list, ccs-resume and ccs-close into $BINDIR"
+ln -sf "$DEST/bin/ccs-close"   "$BINDIR/ccs-close"
+ln -sf "$DEST/bin/ccs-profile" "$BINDIR/ccs-profile"
+ln -sf "$DEST/bin/ccs-bot"     "$BINDIR/ccs-bot"
+ln -sf "$DEST/bin/ccs-gateway-sync" "$BINDIR/ccs-gateway-sync"
+say "Linked ccs-new, ccs-list, ccs-resume, ccs-close and ccs-profile into $BINDIR"
 
 case ":$PATH:" in
   *":$BINDIR:"*) ;;
@@ -63,10 +66,18 @@ mkdir -p "$CCS_WORKDIR"
 cp "$SRC/systemd/claude-code-server.service"       "$UNITDIR/"
 cp "$SRC/systemd/claude-code-server-check.service" "$UNITDIR/"
 cp "$SRC/systemd/claude-code-server.timer"         "$UNITDIR/"
+cp "$SRC/systemd/ccs-bot.service"                  "$UNITDIR/"
 systemctl --user daemon-reload
 systemctl --user enable claude-code-server.service claude-code-server.timer >/dev/null
 systemctl --user start  claude-code-server.timer
 say "Enabled systemd user units"
+
+# The control bot only makes sense once a Telegram token exists.
+if [ -f "$HOME/.claude/channels/telegram/.env" ]; then
+  systemctl --user enable --now ccs-bot.service >/dev/null 2>&1     && say "Control bot enabled (ccs-bot)"     || warn "Could not start ccs-bot; check: journalctl --user -u ccs-bot"
+else
+  warn "No Telegram token yet; ccs-bot installed but not enabled"
+fi
 
 if [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" != "yes" ]; then
   say "Enabling lingering so sessions survive logout and reboot (needs sudo)"
@@ -111,5 +122,7 @@ After that the pool starts sessions unattended.
   ccs-new <topic>     start a named session
   ccs-resume          list and reopen earlier conversations
   ccs-close <name>    stop a session for good
+  ccs-profile         list backends; ccs-profile <name> switches one
+  ccs-bot             Telegram control bot (runs as a systemd user service)
 
 EOF

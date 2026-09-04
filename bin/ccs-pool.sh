@@ -52,7 +52,13 @@ restore_after_boot() {
       continue
     fi
 
-    ccs_resume "$name" "$uuid"
+    # The dedicated channel session has to come back with its channel attached,
+    # otherwise the messaging bridge is silently missing after a reboot.
+    if [ "$name" = "$(ccs_channel_name 2>/dev/null)" ]; then
+      ccs_resume "$name" "$uuid" "$CCS_CHANNEL"
+    else
+      ccs_resume "$name" "$uuid"
+    fi
     restored=$((restored + 1))
     sleep 2
   done
@@ -67,10 +73,20 @@ if [ -n "$current_boot" ] && [ "$current_boot" != "$stored_boot" ]; then
   [ -n "$stored_boot" ] && restore_after_boot
 fi
 
+# The dedicated channel session is not part of the idle pool: it is always the
+# same session so the bot token has exactly one listener.
+channel_session=$(ccs_channel_name 2>/dev/null) || channel_session=""
+if [ -n "$channel_session" ] && ! tmux has-session -t "$channel_session" 2>/dev/null; then
+  ccs_start "$channel_session" "$CCS_CHANNEL"
+  sleep 2
+fi
+
 have_idle=0
 count=0
 
 for session in $(ccs_sessions); do
+  # Counted, but never treated as the spare and never auto renamed.
+  [ -n "$channel_session" ] && [ "$session" = "$channel_session" ] && continue
   count=$((count + 1))
 
   transcript=$(ccs_transcript "$session") || transcript=""
@@ -104,9 +120,13 @@ for session in $(ccs_sessions); do
         fi
       fi
 
-      if [ -f "$CCS_POOLDIR/${session}.uuid" ]; then
-        mv -f "$CCS_POOLDIR/${session}.uuid" "$CCS_POOLDIR/${newname}.uuid"
-      fi
+      # The record is the uuid and the backend it runs on. Moving only half of
+      # it leaves the profile behind under a name that may be handed out again.
+      for part in uuid profile; do
+        if [ -f "$CCS_POOLDIR/${session}.${part}" ]; then
+          mv -f "$CCS_POOLDIR/${session}.${part}" "$CCS_POOLDIR/${newname}.${part}"
+        fi
+      done
       tmux rename-session -t "$session" "$newname" 2>/dev/null \
         && ccs_log "renamed: $session -> $newname"
       ;;
