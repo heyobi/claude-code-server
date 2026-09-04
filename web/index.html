@@ -40,6 +40,7 @@
   /* The page colour, thinned. Used to fade the conversation out under the
      bars rather than cutting it off with an edge. */
   --veil: rgba(246, 247, 248, .93);
+  --veil-soft: rgba(246, 247, 248, .40);
   --radius: 14px;
 }
 @media (prefers-color-scheme: dark) {
@@ -66,6 +67,7 @@
     --solid: rgba(32, 37, 42, .95);
     --veilglass: rgba(20, 24, 28, .28);
     --veil: rgba(17, 20, 23, .93);
+    --veil-soft: rgba(17, 20, 23, .40);
   }
 }
 * {
@@ -93,10 +95,11 @@ body {
   --vh: 100%; --vtop: 0px;
   --pad-top: env(safe-area-inset-top);
   --pad-bottom: env(safe-area-inset-bottom);
-  /* How far the composer stays off the floor. Most of the home indicator's
-     strip is empty — the bar itself is a few points tall and sits at the very
-     bottom — so clearing all 34 of them left the panel visibly hovering. */
-  --dock-floor: calc(var(--pad-bottom) * .3 + 6px);
+  /* How far the composer stays off the floor. A fraction of the inset and
+     nothing else: a constant added here is a guess about a device, and it was
+     what kept the panel hovering. With no inset — a keyboard covering it, a
+     phone without an indicator — the panel simply rests on the edge. */
+  --dock-floor: calc(var(--pad-bottom) * .2);
 }
 /* The keyboard is covering the home indicator, so nothing needs to be held
    clear of it. Same at the top: the shell has already been moved down. */
@@ -117,7 +120,7 @@ html.kb { --pad-top: 0px; --pad-bottom: 0px; }
    a line across the top is what made it read as a lid over the page. */
 header {
   position: absolute; top: 0; left: 0; right: 0; z-index: 5;
-  padding: calc(var(--pad-top) + 8px) 10px 22px;
+  padding: calc(var(--pad-top) + 8px) 10px 30px;
   display: flex; align-items: center; gap: 10px;
   /* Only the controls take touches; the rest is conversation. */
   pointer-events: none;
@@ -132,11 +135,24 @@ header::before, header::after {
 header::before {
   -webkit-backdrop-filter: blur(14px) saturate(160%);
   backdrop-filter: blur(14px) saturate(160%);
-  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 70%, transparent 100%);
-  mask-image: linear-gradient(180deg, #000 0%, #000 70%, transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, #000 0%,
+                      #000 calc(var(--pad-top) + 50px),
+                      rgba(0, 0, 0, .4) calc(var(--pad-top) + 66px),
+                      transparent 100%);
+  mask-image: linear-gradient(180deg, #000 0%,
+              #000 calc(var(--pad-top) + 50px),
+              rgba(0, 0, 0, .4) calc(var(--pad-top) + 66px),
+              transparent 100%);
 }
 header::after {
-  background: linear-gradient(180deg, var(--veil) 0%, var(--veil) 68%, transparent 100%);
+  /* Solid to the bottom of the title, then a long thin ramp — the shorter the
+     ramp, the more it reads as an edge. In pixels, not percentages: the header
+     is as tall as the status bar makes it, and a percentage would put the ramp
+     across the title on one device and below it on another. */
+  background: linear-gradient(180deg, var(--veil) 0%,
+              var(--veil) calc(var(--pad-top) + 50px),
+              var(--veil-soft) calc(var(--pad-top) + 66px),
+              transparent 100%);
 }
 #who { flex: 1; min-width: 0; text-align: center; }
 #name {
@@ -460,9 +476,7 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
   /* Clear of the composer's fade, or it looks like part of it. */
   bottom: calc(var(--dock-floor) + var(--bar-bottom) + 6px);
   width: 40px; height: 40px; font-size: 18px;
-  /* Opaque, unlike the rest: it floats over the conversation with nothing
-     behind it to frost, and a translucent disc there just disappears. */
-  background: var(--solid);
+  background: var(--glass);
   opacity: 0; pointer-events: none;
   transform: translateX(-50%) translateY(8px);
   transition: opacity .18s ease, transform .18s ease;
@@ -522,7 +536,6 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
   transition: transform .14s ease, filter .14s ease;
 }
 #modelchip .mname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#modelchip .mcaret { font-size: 10px; opacity: .5; flex: none; }
 #modelchip:active { transform: scale(.94); filter: brightness(.94); }
 
 /* Messages typed while it was busy, waiting their turn. */
@@ -755,6 +768,6 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 <div id="veil"><div id="sheet"></div></div>
 <div id="popveil"><div id="pop"></div></div>
 
-<script src="app.js?v=28"></script>
+<script src="app.js?v=29"></script>
 </body>
 </html>

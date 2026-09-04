@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v28';
+const BUILD = 'v29';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -214,8 +214,7 @@ function paintModel() {
   const label = row.model
     ? modelTitle(row.model)
     : (row.profile === '-' || !row.profile ? 'Claude' : row.profile);
-  chip.innerHTML = '<span class="mname">' + esc(label) + '</span>' +
-                   '<span class="mcaret">▼</span>';
+  chip.innerHTML = '<span class="mname">' + esc(label) + '</span>';
 }
 
 function setStatus(ready, profile) {

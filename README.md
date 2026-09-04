@@ -302,6 +302,10 @@ continuing. The fade is two layers — a masked blur with the page colour over i
 — so a browser that will not mask a `backdrop-filter` still carries the text
 off, it just does it without the blur.
 
+The ramp is measured in pixels from the top, not in percentages of the header.
+The header is as tall as the status bar makes it, so a percentage puts the fade
+across the title on one device and below it on another.
+
 ### The composer
 
 One panel: what you are writing on top, what you are writing it with underneath
@@ -309,11 +313,12 @@ One panel: what you are writing on top, what you are writing it with underneath
 picker, so the thing you most often want to change is one tap from where you are
 typing.
 
-The model sits in a pill with a chevron, not as plain text beside the attach
-button — a label next to a control reads as a caption, and nobody taps a
-caption. The panel rests about a third of the home indicator's strip off the
-floor rather than clearing all of it: the indicator is a few points tall at the
-very bottom, and honouring the whole inset left the composer visibly hovering.
+The model sits in a pill, not as plain text beside the attach button — a label
+next to a control reads as a caption, and nobody taps a caption. The panel's
+distance from the floor is a fraction of the safe-area inset and nothing else:
+every constant added there was a guess about one device, and each one left the
+composer hovering somewhere. With no inset — a keyboard covering it, a phone
+without an indicator — it simply rests on the edge.
 
 Nothing traps you behind the keyboard. Dragging the conversation dismisses it,
 so does tapping anything in it that is not a control, and the layout puts the
