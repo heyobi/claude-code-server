@@ -87,18 +87,29 @@ def profiles():
     return names
 
 
+def profile_env(profile):
+    values = {}
+    try:
+        with open(os.path.join(PROFILES, profile + ".env"), encoding="utf-8") as handle:
+            for line in handle:
+                if "=" in line and not line.strip().startswith("#"):
+                    key, _, value = line.strip().partition("=")
+                    values[key.strip()] = value.strip().strip("'\"")
+    except OSError:
+        pass
+    return values
+
+
+def profile_label(profile):
+    """A profile is named after its config file; that is a filename, not a
+    heading. CCS_PROFILE_LABEL is what the picker should say."""
+    return profile_env(profile).get("CCS_PROFILE_LABEL") or profile
+
+
 def gateway_models(profile):
     """Ask the gateway what it serves. Hardcoded lists go stale."""
     def produce():
-        env = {}
-        try:
-            with open(os.path.join(PROFILES, profile + ".env"), encoding="utf-8") as h:
-                for line in h:
-                    if "=" in line and not line.strip().startswith("#"):
-                        key, _, value = line.strip().partition("=")
-                        env[key.strip()] = value.strip().strip("'\"")
-        except OSError:
-            return []
+        env = profile_env(profile)
         base = env.get("ANTHROPIC_BASE_URL")
         if not base:
             return []
@@ -125,7 +136,7 @@ def model_tree():
         if name == "-":
             tree.append({"profile": "-", "label": "Claude", "models": CLAUDE_MODELS})
         else:
-            tree.append({"profile": name, "label": name,
+            tree.append({"profile": name, "label": profile_label(name),
                          "models": gateway_models(name)})
     return tree
 
