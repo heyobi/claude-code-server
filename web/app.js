@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v35';
+const BUILD = 'v36';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -598,10 +598,9 @@ function measurements() {
     'pay ' + foot,
     'güvenli ' + probe('env(safe-area-inset-top)') + '/' +
       probe('env(safe-area-inset-bottom)'),
-    // What it works out to now, and what is actually applied: they differ when
-    // the first measurement was taken before the window settled.
-    'eksik ' + slackBelow() + ' → ' +
-      getComputedStyle(document.documentElement).getPropertyValue('--slack').trim(),
+    // Zero once the window has been given the whole screen. Anything else
+    // means the status bar is eating the bottom of it.
+    'eksik ' + slackBelow() + 'px',
     home ? 'uygulama' : 'tarayıcı',
   ].join(' · ');
 }
@@ -1423,9 +1422,11 @@ $('stream').addEventListener('click', (e) => {
 // everything fixed to the bottom of it floats that far above the glass. The
 // phone's own numbers said it plainly: screen 874, window 812, inset 62.
 //
-// The guard is the top inset: it is only non-zero when the page is being drawn
-// under the status bar, which is the only case where the missing strip is
-// really ours to paint into.
+// It is a diagnostic, not a correction. The strip is not the page's canvas:
+// pushing the composer into it cut the composer in half on the phone. The only
+// real fix is not to ask for a translucent status bar, which is what the meta
+// tag in the head does now — and that also takes the top inset to zero, which
+// takes this to zero with it.
 function slackBelow() {
   if (window.navigator.standalone !== true) return 0;
   if (window.innerHeight <= window.innerWidth) return 0;            // portrait only
@@ -1445,30 +1446,9 @@ function probe(expr) {
   return h;
 }
 
-// Measured more than once, because the first measurement lies. An installed
-// app reports the full screen height for its window until the layout settles,
-// which reads as no shortfall at all — and that is exactly the moment the
-// script runs. So it is taken again as things come to rest, and again whenever
-// the window changes size.
-let slackPx = -1;
-function fitSlack() {
-  // Not while typing: the keyboard moves everything, and a composer that
-  // jumps mid-sentence is worse than one sitting a little high.
-  if (document.documentElement.classList.contains('kb')) return;
-  const now = slackBelow();
-  if (now === slackPx) return;
-  slackPx = now;
-  document.documentElement.style.setProperty('--slack', now + 'px');
-}
-
-fitSlack();
-[150, 500, 1500].forEach((ms) => setTimeout(fitSlack, ms));
-window.addEventListener('resize', fitSlack);
-window.addEventListener('pageshow', fitSlack);
-window.addEventListener('orientationchange', () => setTimeout(fitSlack, 250));
-if (window.visualViewport) {
-  window.visualViewport.addEventListener('resize', () => setTimeout(fitSlack, 60));
-}
+// Nothing is applied from this any more — see slackBelow above. It stays as a
+// number in the layout readout, because it is the number that says whether the
+// window has been given the whole screen.
 
 
 // iOS does not shrink the page for the keyboard. It leaves the layout alone

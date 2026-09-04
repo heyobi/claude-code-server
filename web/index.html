@@ -7,7 +7,14 @@
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#111417">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<!-- Not black-translucent. With it iOS draws the page from the top of the
+     display but sizes the window as though it began below the status bar, so
+     the window is exactly one inset short of the glass and anything fixed to
+     its bottom floats that far above the floor. The strip is not the page's to
+     paint either — pushing the composer into it cut the composer in half. With
+     "default" the window is placed below the status bar and its bottom edge
+     lands on the bottom of the screen, which is the whole point. -->
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="apple-touch-icon" href="icon-180.png">
 <style>
 :root {
@@ -103,12 +110,6 @@ body {
      the home indicator's inset read as hovering, and the indicator is drawn
      over content everywhere else on the system too. */
   --dock-floor: 0px;
-  /* How far the window falls short of the glass. Measured at runtime and zero
-     everywhere except an installed iOS app with a translucent status bar,
-     where the window is drawn from the top of the screen but sized as though
-     it began below the bar. The canvas really is down there — the page's own
-     background paints it — so the composer is pushed into it. */
-  --slack: 0px;
 }
 /* The keyboard is covering the home indicator, so nothing needs to be held
    clear of it. Same at the top: the shell has already been moved down. */
@@ -128,7 +129,7 @@ html.kb { --pad-top: 0px; --pad-bottom: 0px; }
    a line across the top is what made it read as a lid over the page. */
 header {
   position: fixed; top: 0; left: 0; right: 0; z-index: 5;
-  padding: calc(var(--pad-top) + 8px) 10px 62px;
+  padding: max(12px, calc(var(--pad-top) + 8px)) 10px 62px;
   display: flex; align-items: center; gap: 10px;
   /* Only the controls take touches; the rest is conversation. */
   pointer-events: none;
@@ -217,7 +218,7 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
   /* Narrower gutters: the text was being squeezed into the middle of the
      screen for no reason. */
   padding: calc(var(--pad-top) + var(--bar-top)) 10px
-           calc(var(--dock-floor) + var(--bar-bottom) - var(--slack));
+           calc(var(--dock-floor) + var(--bar-bottom));
 }
 /* What you said is a message and sits in one. What the model says is the page
    itself — an answer arriving in a box reads as finished, and it is being
@@ -501,7 +502,7 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 #jump {
   position: fixed; z-index: 4; left: 50%;
   /* Clear of the composer's fade, or it looks like part of it. */
-  bottom: calc(var(--dock-floor) + var(--bar-bottom) + 6px - var(--slack));
+  bottom: calc(var(--dock-floor) + var(--bar-bottom) + 6px);
   width: 40px; height: 40px; font-size: 18px;
   background: var(--glass);
   opacity: 0; pointer-events: none;
@@ -516,7 +517,7 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
    is one, the home indicator when there is not. The fade under it is the
    header's, upside down; a drawn line there cut the conversation in two. */
 #composer {
-  position: fixed; bottom: calc(0px - var(--slack)); left: 0; right: 0; z-index: 5;
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 5;
   display: block;
   padding: 8px 10px var(--dock-floor);
 }
@@ -796,6 +797,6 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 <div id="veil"><div id="sheet"></div></div>
 <div id="popveil"><div id="pop"></div></div>
 
-<script src="app.js?v=35"></script>
+<script src="app.js?v=36"></script>
 </body>
 </html>
