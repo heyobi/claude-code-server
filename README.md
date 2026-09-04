@@ -297,6 +297,50 @@ cooldown and the next request is routed past it.
 The trade-off is the one from the previous section: on another provider you keep
 the sessions, the pool and the bot, and you lose Remote Control.
 
+## Antigravity as a backend
+
+`agy`, Google's Antigravity CLI, signs in to its own account with its own quota
+and serves Gemini, GPT-OSS and Claude models alike. `ccs-agy-bridge` puts the
+Anthropic Messages API in front of it, which makes Antigravity a profile you
+pick from the same menu as everything else — and one that does not go away when
+a Claude subscription does.
+
+```sh
+curl -fsSL https://antigravity.google/cli/install.sh | bash   # then run `agy` once to sign in
+systemctl --user enable --now ccs-agy-bridge
+```
+
+```sh
+# ~/.config/claude-code-server/profiles/antigravity.env
+ANTHROPIC_BASE_URL=http://127.0.0.1:4001
+ANTHROPIC_AUTH_TOKEN=antigravity-local
+ANTHROPIC_API_KEY=
+CCS_PROFILE_LABEL=Antigravity
+CCS_PROFILE_MODEL=gemini-3.8-flash-medium
+```
+
+Two things about it are worth knowing, because they are not what a gateway
+usually does.
+
+**It does not forward the tools.** `agy --print` is not a model endpoint, it is
+an agent: it reads files, runs commands and returns the finished answer. There
+is nothing on the far side that would emit a `tool_use` block, so the tool
+catalogue and system prompt are dropped rather than passed along. The work still
+happens — agy does it, in its own workspace.
+
+**It resumes rather than replays.** Claude Code sends the whole transcript every
+turn; agy keeps the conversation on its side. The bridge maps one to the other
+and sends only the new message, which is the difference between a long session
+costing a little and costing more each time you speak. The map is keyed on the
+transcript id the client already sends, so it survives a rename and a switch to
+another backend, and it is written to disk so it survives a restart of the
+bridge.
+
+Sessions also launch with `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`. After
+each answer Claude Code asks the model to guess your next message; on your own
+subscription that is invisible, in front of a metered backend it is a second
+full request per turn that costs about what the answer did.
+
 ## How it works
 
 ```

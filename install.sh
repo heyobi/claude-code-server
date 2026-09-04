@@ -44,6 +44,7 @@ ln -sf "$DEST/bin/ccs-profile" "$BINDIR/ccs-profile"
 ln -sf "$DEST/bin/ccs-bot"     "$BINDIR/ccs-bot"
 ln -sf "$DEST/bin/ccs-gateway-sync" "$BINDIR/ccs-gateway-sync"
 ln -sf "$DEST/bin/ccs-api"     "$BINDIR/ccs-api"
+ln -sf "$DEST/bin/ccs-agy-bridge" "$BINDIR/ccs-agy-bridge"
 say "Linked ccs-new, ccs-list, ccs-resume, ccs-close and ccs-profile into $BINDIR"
 
 case ":$PATH:" in
@@ -71,6 +72,7 @@ cp "$SRC/systemd/claude-code-server-check.service" "$UNITDIR/"
 cp "$SRC/systemd/claude-code-server.timer"         "$UNITDIR/"
 cp "$SRC/systemd/ccs-bot.service"                  "$UNITDIR/"
 cp "$SRC/systemd/ccs-api.service"                  "$UNITDIR/"
+cp "$SRC/systemd/ccs-agy-bridge.service"           "$UNITDIR/"
 systemctl --user daemon-reload
 systemctl --user enable claude-code-server.service claude-code-server.timer >/dev/null
 systemctl --user start  claude-code-server.timer

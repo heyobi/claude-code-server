@@ -1,0 +1,404 @@
+#!/usr/bin/env python3
+"""Speak the Anthropic Messages API in front of the Antigravity CLI.
+
+The point of this is the one requirement everything else is built around: when
+the Claude subscription lapses, the machine keeps working. `agy` is signed in to
+a separate account with its own quota, and it serves Gemini, GPT-OSS and Claude
+models alike, so putting it behind the API that Claude Code already speaks turns
+Antigravity into just another backend you pick from a menu.
+
+It is not a model endpoint, though, and pretending otherwise would go wrong in a
+specific way: `agy --print` is itself an agent. It reads files, runs commands and
+returns the finished answer. So the tool definitions Claude Code sends are
+dropped rather than forwarded — there is nothing on the other side that would
+emit a tool_use block, and agy does that work itself, in its own workspace.
+Dropping the system prompt too is the same decision, and has the side effect of
+not paying for a tool catalogue the executor cannot use.
+
+Each turn resumes agy's own conversation rather than replaying the transcript,
+which is what keeps a long session from re-sending itself on every message.
+
+    ccs-agy-bridge [--port N] [--host H] [--log]
+
+Standard library only.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import threading
+import time
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+HOME = os.path.expanduser("~")
+AGY = os.path.join(HOME, ".local", "bin", "agy")
+WORKDIR = os.environ.get("CCS_WORKDIR") or os.path.join(HOME, "calisma")
+LOGFILE = os.path.join(HOME, ".claude", "claude-code-server", "agy-bridge.log")
+
+TIMEOUT = 900          # agy is an agent; a real task can take a while
+MODELS_TTL = 300
+
+CONVOS = {}            # conversation key -> agy conversation id
+CONVOS_FILE = os.path.join(HOME, ".claude", "claude-code-server", "agy-convos.json")
+LOCK = threading.Lock()
+LOG = False
+
+
+def load_convos():
+    """Survive a restart of this process. Losing the map is not fatal — the next
+    turn replays the transcript and agy picks the thread back up — but on a long
+    session that is an expensive way to say hello."""
+    try:
+        with open(CONVOS_FILE, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_convos():
+    try:
+        os.makedirs(os.path.dirname(CONVOS_FILE), exist_ok=True)
+        tmp = CONVOS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(CONVOS, handle, indent=2)
+        os.replace(tmp, CONVOS_FILE)
+    except OSError:
+        pass
+
+
+def note(line):
+    if not LOG:
+        return
+    try:
+        os.makedirs(os.path.dirname(LOGFILE), exist_ok=True)
+        with open(LOGFILE, "a", encoding="utf-8") as handle:
+            handle.write("{} {}\n".format(time.strftime("%H:%M:%S"), line))
+    except OSError:
+        pass
+
+
+# --------------------------------------------------------------------------- agy
+
+
+_models = {"at": 0.0, "value": []}
+
+
+def models():
+    if time.time() - _models["at"] < MODELS_TTL and _models["value"]:
+        return _models["value"]
+    out = []
+    try:
+        done = subprocess.run([AGY, "models"], capture_output=True, text=True,
+                              timeout=60, cwd=WORKDIR)
+        for line in (done.stdout or "").splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 2 and parts[0].strip() and " " not in parts[0].strip():
+                out.append(parts[0].strip())
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    if out:
+        _models["at"] = time.time()
+        _models["value"] = out
+    return out or _models["value"]
+
+
+def flatten(payload):
+    """Turn the request into the one prompt agy takes.
+
+    Only the last user turn is sent when we are resuming: agy is keeping the
+    conversation on its side, and replaying the whole thing would pay for it
+    twice.
+    """
+    messages = payload.get("messages") or []
+    if not messages:
+        return ""
+    last = messages[-1]
+    return text_of(last.get("content"))
+
+
+def text_of(content):
+    """Text a person would recognise as the message.
+
+    A user turn carries more than what was typed: budget notices, command
+    output, system reminders. They are all bracketed, and passing them along
+    only gives the executor something else to answer.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text":
+                body = block.get("text", "")
+                if body.lstrip().startswith("<"):
+                    continue
+                parts.append(body)
+            elif block.get("type") == "tool_result":
+                inner = block.get("content")
+                parts.append(text_of(inner) if inner else "")
+        return "\n".join(p for p in parts if p)
+    return ""
+
+
+def whole(payload):
+    """Everything said so far, for the first turn of a resumed transcript."""
+    lines = []
+    for message in payload.get("messages") or []:
+        body = text_of(message.get("content")).strip()
+        if body:
+            who = "User" if message.get("role") == "user" else "Assistant"
+            lines.append("{}: {}".format(who, body))
+    return "\n\n".join(lines)
+
+
+def convo_key(payload, headers=None):
+    """Identify the conversation this request belongs to.
+
+    Claude Code sends the whole transcript on every turn and nothing in the body
+    names the session — metadata carries a device id, which is the same for all
+    of them. So the launcher puts the session name in a header, and that is what
+    we key on. Falling back to the first user message is worse than it sounds:
+    a resumed session opens with "Continue from where you left off", which every
+    resumed session says, so they would all land in one conversation."""
+    if headers:
+        # The client's own session id is the transcript uuid, which survives both
+        # a rename and a relaunch onto another backend — the two moments you
+        # would most mind losing the thread. The header the launcher adds is the
+        # fallback, for a client that does not send one.
+        own = headers.get("X-Claude-Code-Session-Id")
+        if own:
+            return "client:" + own
+        named = headers.get("X-Ccs-Session") or headers.get("x-ccs-session")
+        if named:
+            return "session:" + named
+    for message in payload.get("messages") or []:
+        if message.get("role") == "user":
+            body = text_of(message.get("content"))[:2000]
+            return "first:" + hashlib.sha256(body.encode("utf-8")).hexdigest()[:32]
+    return "empty"
+
+
+def run_agy(prompt, model, conversation, stream):
+    args = [AGY, "--print=" + prompt, "--output-format",
+            "stream-json" if stream else "json"]
+    if model:
+        args += ["--model", model]
+    if conversation:
+        args += ["--conversation", conversation]
+    note("agy model={} conv={} stream={} prompt={!r}".format(
+        model, (conversation or "-")[:8], stream, prompt[:120]))
+    return subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, cwd=WORKDIR, bufsize=1)
+
+
+# --------------------------------------------------------------------------- http
+
+
+def sse(handler, kind, payload):
+    blob = "event: {}\ndata: {}\n\n".format(kind, json.dumps(payload))
+    handler.wfile.write(blob.encode("utf-8"))
+    handler.wfile.flush()
+
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    server_version = "ccs-agy-bridge"
+
+    def log_message(self, *args):
+        pass
+
+    def send_json(self, status, payload):
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def do_GET(self):
+        path = self.path.split("?")[0]
+        if path in ("/v1/models", "/models"):
+            return self.send_json(200, {
+                "data": [{"id": m, "object": "model"} for m in models()],
+                "object": "list",
+            })
+        if path in ("/health", "/health/liveliness"):
+            return self.send_json(200, {"ok": True})
+        return self.send_json(404, {"error": "not found"})
+
+    def do_POST(self):
+        path = self.path.split("?")[0]
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except ValueError:
+            return self.send_json(400, {"type": "error",
+                                        "error": {"type": "invalid_request_error",
+                                                  "message": "bad json"}})
+        if path.endswith("/count_tokens"):
+            # A rough four-characters-per-token guess. Claude Code uses this to
+            # decide when to compact, and a wrong answer only shifts that.
+            size = len(json.dumps(payload.get("messages") or []))
+            return self.send_json(200, {"input_tokens": max(1, size // 4)})
+        if path not in ("/v1/messages", "/messages"):
+            return self.send_json(404, {"error": "not found"})
+
+        note("POST {} keys={} stream={}".format(
+            path, sorted(payload.keys()), payload.get("stream")))
+        note("  headers: {}".format(
+            {k: v[:60] for k, v in self.headers.items()
+             if k.lower().startswith(("x-", "anthropic-"))}))
+
+        key = convo_key(payload, self.headers)
+        with LOCK:
+            conversation = CONVOS.get(key)
+        prompt = flatten(payload) if conversation else whole(payload)
+        if not prompt.strip():
+            prompt = "(bos mesaj)"
+        model = payload.get("model") or ""
+        if model in ("", "default"):
+            model = None
+
+        if payload.get("stream"):
+            return self.stream_reply(payload, key, prompt, model, conversation)
+        return self.whole_reply(payload, key, prompt, model, conversation)
+
+    # ---- non streaming
+
+    def whole_reply(self, payload, key, prompt, model, conversation):
+        process = run_agy(prompt, model, conversation, stream=False)
+        try:
+            out, err = process.communicate(timeout=TIMEOUT)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            return self.send_json(504, {"type": "error",
+                                        "error": {"type": "timeout_error",
+                                                  "message": "agy timed out"}})
+        try:
+            result = json.loads(out)
+        except ValueError:
+            note("agy bad json: {!r} err={!r}".format(out[:200], err[:200]))
+            return self.send_json(502, {"type": "error",
+                                        "error": {"type": "api_error",
+                                                  "message": (err or out)[:400]}})
+        remember(key, result.get("conversation_id"))
+        usage = result.get("usage") or {}
+        return self.send_json(200, {
+            "id": "msg_" + uuid.uuid4().hex[:24],
+            "type": "message",
+            "role": "assistant",
+            "model": payload.get("model") or "antigravity",
+            "content": [{"type": "text", "text": result.get("response") or ""}],
+            "stop_reason": "end_turn",
+            "stop_sequence": None,
+            "usage": {"input_tokens": usage.get("input_tokens", 0),
+                      "output_tokens": usage.get("output_tokens", 0)},
+        })
+
+    # ---- streaming
+
+    def stream_reply(self, payload, key, prompt, model, conversation):
+        process = run_agy(prompt, model, conversation, stream=True)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        # No Content-Length, so the body ends when the connection does. On
+        # HTTP/1.1 that has to be announced, or the client sits waiting for a
+        # continuation that never comes.
+        self.send_header("Connection", "close")
+        self.close_connection = True
+        self.end_headers()
+
+        message_id = "msg_" + uuid.uuid4().hex[:24]
+        name = payload.get("model") or "antigravity"
+        try:
+            sse(self, "message_start", {
+                "type": "message_start",
+                "message": {"id": message_id, "type": "message", "role": "assistant",
+                            "model": name, "content": [], "stop_reason": None,
+                            "stop_sequence": None,
+                            "usage": {"input_tokens": 0, "output_tokens": 0}},
+            })
+            sse(self, "content_block_start", {
+                "type": "content_block_start", "index": 0,
+                "content_block": {"type": "text", "text": ""}})
+
+            output = 0
+            for line in process.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                kind = event.get("event")
+                if kind == "step_update":
+                    step = event.get("step_update") or {}
+                    delta = step.get("text_delta") or ""
+                    if delta:
+                        sse(self, "content_block_delta", {
+                            "type": "content_block_delta", "index": 0,
+                            "delta": {"type": "text_delta", "text": delta}})
+                elif kind == "result":
+                    result = event.get("result") or {}
+                    remember(key, result.get("conversation_id"))
+                    output = (result.get("usage") or {}).get("output_tokens", 0)
+
+            sse(self, "content_block_stop", {"type": "content_block_stop", "index": 0})
+            sse(self, "message_delta", {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                "usage": {"output_tokens": output}})
+            sse(self, "message_stop", {"type": "message_stop"})
+        except (BrokenPipeError, ConnectionResetError):
+            process.kill()
+        finally:
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+
+
+def remember(key, conversation_id):
+    if not conversation_id:
+        return
+    with LOCK:
+        if CONVOS.get(key) == conversation_id:
+            return
+        CONVOS[key] = conversation_id
+        save_convos()
+    note("conversation {} -> {}".format(key[:20], conversation_id[:8]))
+
+
+def main():
+    global LOG
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=4001)
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--log", action="store_true",
+                        help="write what the client sends to agy-bridge.log")
+    args = parser.parse_args()
+    LOG = args.log or bool(os.environ.get("CCS_AGY_LOG"))
+    if not os.path.exists(AGY):
+        sys.exit("no agy at {} — install the Antigravity CLI first".format(AGY))
+    CONVOS.update(load_convos())
+    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    server.daemon_threads = True
+    sys.stderr.write("ccs-agy-bridge on {}:{} (workdir {})\n".format(
+        args.host, args.port, WORKDIR))
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

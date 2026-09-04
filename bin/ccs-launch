@@ -30,6 +30,24 @@ fi
 
 export PATH="$HOME/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
+# After each answer Claude Code asks the model to guess what you might type
+# next. On your own subscription that is invisible; in front of a metered
+# backend it is a second full request per turn, and it cost about as much as the
+# answer did. Export the variable yourself to keep them.
+export CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION="${CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION:-false}"
+
+# A gateway that keeps state per conversation needs to tell our sessions apart,
+# and nothing in the request body does: the metadata carries a device id, shared
+# by all of them. Hand it the session name instead. Harmless when the backend is
+# Anthropic, which ignores headers it does not know.
+for i in "$@"; do
+  if [ "${prev:-}" = "--remote-control" ]; then
+    export ANTHROPIC_CUSTOM_HEADERS="X-CCS-Session: $i"
+    break
+  fi
+  prev="$i"
+done
+
 # A profile can name the model to ask for, which matters for gateways where the
 # model name is whatever the gateway config calls it. It wins over any --model
 # the pool already put on the command line.

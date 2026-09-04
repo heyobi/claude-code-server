@@ -19,8 +19,18 @@ TRANSLIT = str.maketrans(
 )
 
 
+# Not everything with role "user" was typed by one. A resumed session opens with
+# the client's own nudge, and every resumed session opens with the same one, so
+# without this a pool fills up with sessions called "continue-from-where-you".
+BOILERPLATE = (
+    "continue from where you left off",
+    "caveat: the messages below were generated",
+    "this session is being continued from a previous",
+)
+
+
 def first_user_text(path):
-    """Return the text of the first user message, or None."""
+    """Return the text of the first message a person actually wrote, or None."""
     try:
         with open(path, encoding="utf-8") as handle:
             for line in handle:
@@ -31,16 +41,24 @@ def first_user_text(path):
                 if entry.get("type") != "user":
                     continue
                 content = (entry.get("message") or {}).get("content")
+                candidate = None
                 if isinstance(content, str) and content.strip():
-                    return content
-                if isinstance(content, list):
+                    candidate = content
+                elif isinstance(content, list):
                     for block in content:
                         if (
                             isinstance(block, dict)
                             and block.get("type") == "text"
                             and block.get("text", "").strip()
                         ):
-                            return block["text"]
+                            candidate = block["text"]
+                            break
+                if candidate is None:
+                    continue
+                lowered = candidate.strip().lower()
+                if any(lowered.startswith(b) for b in BOILERPLATE):
+                    continue
+                return candidate
     except OSError:
         pass
     return None
