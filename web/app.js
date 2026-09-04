@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v40';
+const BUILD = 'v41';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -315,7 +315,7 @@ async function openSession(name) {
   runEl = null;
   tools.clear();
   $('stream').innerHTML = '';
-  $('name').textContent = name;
+  $('name').textContent = shortName(name);
   setStatus(null, null);
   paintModel();
   const data = await api('/api/history?session=' + encodeURIComponent(name));
@@ -384,6 +384,20 @@ function togglePin(name) {
   try { localStorage.setItem('ccs.pins', JSON.stringify([...pins])); } catch {}
 }
 
+// Every session is called ziverbey-something because that is how the pool
+// finds its own tmux sessions among anyone else's. That is a detail of the
+// machine, not part of what the conversation is called, so it comes off before
+// anything is shown and the machine gets named once, in the list's title.
+function shortName(name) {
+  const prefix = (known.prefix || '') + '-';
+  const rest = prefix.length > 1 && name.startsWith(prefix)
+    ? name.slice(prefix.length) : name;
+  // A session the pool numbered rather than named has nothing to show but the
+  // number, and a chat called "01" is worse than no name at all. It gets one
+  // as soon as it has been talked to and the topic can be read off it.
+  return /^\d+$/.test(rest) ? 'Yeni sohbet ' + rest : rest;
+}
+
 function whenish(at) {
   if (!at) return '';
   const gap = Date.now() / 1000 - at;
@@ -410,7 +424,7 @@ async function sessionSheet() {
   const busy = here.filter((s) => !s.ready).sort(byTime);
   const top = here.filter((s) => pins.has(s.name)).sort(byTime);
   const rest = here.filter((s) => !pins.has(s.name)).sort(byTime);
-  sheet('Oturumlar', (box) => {
+  sheet('Oturumlar' + (known.prefix ? ' · ' + known.prefix : ''), (box) => {
     // The filters are always on screen, with their counts. An archive you have
     // to already know about is not somewhere you can put things.
     filters(box, [
@@ -525,7 +539,7 @@ function chatRow(list, s, isPinned) {
     row.innerHTML =
       '<span class="grow">' +
         '<span class="ctop">' +
-          '<span class="cname">' + esc(s.name) + '</span>' +
+          '<span class="cname">' + esc(shortName(s.name)) + '</span>' +
           '<span class="cwhen">' + esc(whenish(s.at)) + '</span>' +
         '</span>' +
         '<span class="cprev">' + esc(s.last || 'Henüz konuşmadı') + '</span>' +
@@ -779,11 +793,17 @@ function paintQueue() {
   });
 }
 
+// A stop button with a message typed into the box is a lie: pressing it
+// queues the message, it does not interrupt anything. So it only looks like a
+// stop while there is nothing to send — the moment you type, it goes back to
+// being the send button, and what it sends waits its turn.
 function paintSend() {
   const send = $('send');
-  send.classList.toggle('stop', busy);
-  send.textContent = busy ? '■' : '↑';
-  send.title = busy ? 'Durdur' : 'Gönder';
+  const holding = typedText().trim() || tray.some((x) => x.path);
+  const willStop = busy && !holding;
+  send.classList.toggle('stop', willStop);
+  send.textContent = willStop ? '■' : '↑';
+  send.title = willStop ? 'Durdur' : (busy ? 'Sıraya al' : 'Gönder');
 }
 
 async function drain() {
@@ -810,6 +830,7 @@ function setBusy(state) {
 let tray = [];   // { path, kind, name } waiting to be sent
 
 function paintTray() {
+  paintSend();
   const box = $('tray');
   box.innerHTML = '';
   box.classList.toggle('on', tray.length > 0);
@@ -1061,7 +1082,7 @@ async function tasksSheet() {
 }
 
 async function renameSheet() {
-  const wanted = prompt('Yeni ad', session);
+  const wanted = prompt('Yeni ad', shortName(session));
   if (!wanted) return;
   closeSheet();
   const r = await post('/api/session', { action: 'rename', session, name: wanted });
@@ -1388,8 +1409,9 @@ if (text.contentEditable !== 'plaintext-only') {
   });
 }
 
-// It grows by itself now; this only keeps the last line in view.
-text.addEventListener('input', () => toBottom());
+// It grows by itself now; this only keeps the last line in view — and tells
+// the send button, which changes meaning the moment there is something to send.
+text.addEventListener('input', () => { paintSend(); toBottom(); });
 // Return makes a line. It is the only way to write a second one on a phone,
 // and the send button is right there. A keyboard with modifiers gets the
 // shortcut it expects instead.

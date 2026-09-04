@@ -378,6 +378,12 @@ def past_conversations():
         })
     return rows
 
+def short_name(name):
+    """The conversation's name without the machine's on the front of it."""
+    prefix = CFG.get("CCS_PREFIX", "") + "-"
+    return name[len(prefix):] if len(prefix) > 1 and name.startswith(prefix) else name
+
+
 def describe(name):
     """A session, and what it is doing.
 
@@ -614,7 +620,7 @@ def notifier():
                     KNOWN_SESSIONS.add(name)
                     # Not on the first pass: everything is new when we start.
                     if STARTED[0]:
-                        ccs_push.send_all({"title": name,
+                        ccs_push.send_all({"title": short_name(name),
                                            "body": "Yeni oturum açıldı",
                                            "session": name})
                 path = transcript_of(name)
@@ -634,7 +640,7 @@ def notifier():
                     continue
                 last = said[-1]
                 sent = ccs_push.send_all({
-                    "title": name,
+                    "title": short_name(name),
                     "body": last["text"][:180],
                     "session": name,
                 })
@@ -952,6 +958,12 @@ class Handler(BaseHTTPRequestHandler):
             if name not in ccs_sessions() or not wanted:
                 return self.reply(400, {"error": "bad request"})
             fresh = "".join(c for c in wanted if c.isalnum() or c in "-_")[:48]
+            # The prefix is how the pool finds its own tmux sessions among
+            # everyone else's, so it goes back on whether or not you typed it.
+            # A session renamed out of the prefix is a session we lose.
+            prefix = CFG.get("CCS_PREFIX", "")
+            if prefix and fresh != prefix and not fresh.startswith(prefix + "-"):
+                fresh = "{}-{}".format(prefix, fresh)
             if not fresh or fresh in ccs_sessions():
                 return self.reply(400, {"error": "bad name"})
             # The record is the id and the backend; both move with the name or

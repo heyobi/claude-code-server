@@ -401,11 +401,37 @@ and takes you to the bottom. It jumps rather than glides: smooth scrolling is
 silently ignored on that element in more than one browser, and a button that
 sometimes does nothing is worse than one that does not animate.
 
+The send button says what it will do. While a session is working it is a stop
+— until you type something, at which point it goes back to being send, because
+pressing it then queues the message rather than interrupting anything, and a
+button that reads "stop" while it means "queue" is one nobody dares press.
+
 Typing while a session is working is neither refused nor an interruption. The
 message waits in a visible queue and goes when the session comes free; the send
 button becomes a stop while it works, and stops the turn without ending the
 session. Both backends behave the same way, because both report readiness the
 same way — from the pane.
+
+### The machine's name is not the conversation's
+
+Every session is called `<prefix>-something` because that prefix is how the
+pool finds its own tmux sessions among anyone else's on the machine. That is
+plumbing, so it comes off before anything is shown: the list is titled with the
+machine once — "Oturumlar · ziverbey" — and the conversations are called what
+they are about. A session the pool only numbered is shown as a new chat with
+its number, because a conversation called "01" is worse than one with no name.
+
+It goes back on when you rename, whether you typed it or not. A session renamed
+out of the prefix is a session the pool can no longer see.
+
+### No empty seat
+
+The pool used to keep one idle session waiting at all times, because before
+there was an interface something had to be ready — nothing could start a
+session on demand. The app can, so `CCS_POOL_IDLE=0` stops keeping one, and a
+quarter of a gigabyte stops sitting in an empty chair. The rest of the pool's
+work stays: restoring conversations after a reboot, and naming a session after
+its topic once it has one.
 
 ### The session list
 

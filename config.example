@@ -75,6 +75,10 @@ CCS_APP_NAME=""
 # How long a gateway may sit unused before it is stopped.
 CCS_GATEWAY_IDLE=600
 
+# Keep one idle session waiting so a new chat opens instantly. 0 means sessions
+# are only started when something asks for one, which is what the web app does.
+CCS_POOL_IDLE=1
+
 # Who runs this server, for the push services. RFC 8292 wants a mailto: or an
 # https: URL; Apple rejects a mailto that is not a routable address with a bare
 # 403, so leave it empty rather than inventing one. Defaults to the project URL.

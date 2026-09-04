@@ -138,6 +138,15 @@ if [ "$have_idle" -eq 1 ]; then
   exit 0
 fi
 
+# A spare session was how you opened a new chat before there was an interface:
+# something had to be waiting, because nothing could start one on demand. The
+# app can, so the seat is optional now — and an empty one costs a quarter of a
+# gigabyte to sit there.
+if [ "$CCS_POOL_IDLE" = "0" ]; then
+  ccs_log "no spare kept (CCS_POOL_IDLE=0)"
+  exit 0
+fi
+
 if [ "$count" -ge "$CCS_MAX_SESSIONS" ]; then
   ccs_log "no idle session, at limit ($count/$CCS_MAX_SESSIONS)"
   exit 0

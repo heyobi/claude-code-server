@@ -8,6 +8,7 @@
 : "${CCS_EXTRA_DIRS:=}"                    # space separated extra --add-dir paths
 : "${CCS_MAX_SESSIONS:=4}"                 # each session is its own claude process
 : "${CCS_AUTO_RENAME:=1}"                  # 1 = rename sessions after their topic
+: "${CCS_POOL_IDLE:=1}"                    # keep a spare session waiting; 0 = only on demand
 : "${CCS_PANE_WIDTH:=200}"
 : "${CCS_PANE_HEIGHT:=50}"
 
