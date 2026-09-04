@@ -67,7 +67,13 @@ CCS_APP_NAME=""
 # A backend profile lives at ~/.config/claude-code-server/profiles/<name>.env and
 # is named after its file. That is a filename, not a heading, so a profile may
 # also carry CCS_PROFILE_LABEL to say what the model picker should call it —
-# "Google API" rather than "gemini".
+# "Google API" rather than "gemini". A profile whose gateway is expensive to
+# keep running may also carry CCS_PROFILE_UP, CCS_PROFILE_DOWN and
+# CCS_PROFILE_HEALTH; it is then started when a session moves onto that profile
+# and stopped once none is on it. Quote any value with a space in it.
+
+# How long a gateway may sit unused before it is stopped.
+CCS_GATEWAY_IDLE=600
 
 # Who runs this server, for the push services. RFC 8292 wants a mailto: or an
 # https: URL; Apple rejects a mailto that is not a routable address with a bare

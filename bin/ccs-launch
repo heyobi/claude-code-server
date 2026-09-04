@@ -30,6 +30,15 @@ fi
 
 export PATH="$HOME/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
+# A profile may run behind a gateway that is not kept running: ours is a
+# LiteLLM container, the largest thing on the machine, useful only to sessions
+# on that one profile and usually none of them. Bring it up and wait for it to
+# answer — claude's first request would otherwise land on a closed port, and
+# the session would come up broken with no clue why.
+if [ -n "${CCS_PROFILE_UP:-}" ] && [ "$profile" != "-" ]; then
+  "$(dirname "$(readlink -f "$0")")/ccs-gateway" up "$profile" || true
+fi
+
 # After each answer Claude Code asks the model to guess what you might type
 # next. On your own subscription that is invisible; in front of a metered
 # backend it is a second full request per turn, and it cost about as much as the

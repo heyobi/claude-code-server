@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# Start a backend's gateway when something needs it, stop it when nothing does.
+#
+#   ccs-gateway status        what each gateway costs and whether it is up
+#   ccs-gateway idle-stop     stop the gateways no live session is using
+#   ccs-gateway up <profile>  bring one up and wait for it to answer
+#
+# A gateway is a process that sits between Claude Code and a model provider.
+# Ours is a LiteLLM container, and it is the largest thing on the machine —
+# larger than any session — while being useful only to sessions on that one
+# profile, which is usually none of them. So a profile can say how to bring its
+# gateway up and take it down:
+#
+#   CCS_PROFILE_UP=docker start litellm
+#   CCS_PROFILE_DOWN=docker stop litellm
+#   CCS_PROFILE_PROBE=127.0.0.1:4000
+#   CCS_PROFILE_HEALTH=http://127.0.0.1:4000/health/liveliness
+#
+# ccs-launch runs the first before starting a session on that profile; this
+# script runs the second, on a timer, once nothing has used it for a while.
+set -uo pipefail
+
+CCS_BIN="$(dirname "$(readlink -f "$0")")"
+# shellcheck source=ccs-common.sh
+. "$CCS_BIN/ccs-common.sh"
+
+# How long a gateway may sit unused before it is stopped. Not zero: switching a
+# session between profiles takes it out of use for a few seconds, and paying a
+# cold start for that would be worse than the memory.
+: "${CCS_GATEWAY_IDLE:=600}"
+
+IDLEDIR="$CCS_STATE/gateways"
+mkdir -p "$IDLEDIR"
+
+# One field out of a profile file, without sourcing it into this shell. The
+# quotes come off: a value with a space in it has to be quoted in the file,
+# because the file is also sourced by the launcher and an unquoted
+# "docker start litellm" makes it try to run "start".
+field() {
+  local raw
+  raw=$(grep -E "^${2}=" "$CCS_PROFILES/${1}.env" 2>/dev/null | head -1 | cut -d= -f2-)
+  raw="${raw%\"}"; raw="${raw#\"}"
+  raw="${raw%'}"; raw="${raw#'}"
+  printf '%s' "$raw"
+}
+
+# Answering, not merely bound. Docker publishes a container's port the moment
+# it starts, before anything inside is listening, so a TCP connect to a
+# container says nothing at all — it succeeded here in 0.27s against a gateway
+# that needed four more seconds before it would answer. A profile that names a
+# health URL is checked with a request instead.
+listening() {
+  local probe="$1" host port
+  if [ -n "${2:-}" ]; then
+    [ "$(curl -s -o /dev/null -m 3 -w '%{http_code}' "$2")" != "000" ]
+    return
+  fi
+  [ -z "$probe" ] && return 1
+  host=${probe%%:*}; port=${probe##*:}
+  (exec 3<>"/dev/tcp/$host/$port") 2>/dev/null
+}
+
+in_use() {
+  local profile="$1" session
+  for session in $(ccs_sessions); do
+    [ "$(ccs_profile_of "$session")" = "$profile" ] && return 0
+  done
+  return 1
+}
+
+wait_for() {
+  local probe="$1" health="$2" tries="${3:-60}"
+  [ -z "$probe" ] && [ -z "$health" ] && return 0
+  while [ "$tries" -gt 0 ]; do
+    listening "$probe" "$health" && return 0
+    sleep 1
+    tries=$((tries - 1))
+  done
+  return 1
+}
+
+case "${1:-status}" in
+  up)
+    profile="${2:-}"
+    [ -z "$profile" ] && { echo "Which profile?" >&2; exit 1; }
+    up=$(field "$profile" CCS_PROFILE_UP)
+    probe=$(field "$profile" CCS_PROFILE_PROBE)
+    health=$(field "$profile" CCS_PROFILE_HEALTH)
+    rm -f "$IDLEDIR/$profile"
+    if [ -z "$up" ]; then
+      exit 0                      # nothing to start; not an error
+    fi
+    if listening "$probe" "$health"; then
+      exit 0                      # already answering
+    fi
+    ccs_log "gateway up: $profile"
+    sh -c "$up" >/dev/null 2>&1
+    if wait_for "$probe" "$health" "$(field "$profile" CCS_PROFILE_WAIT)"; then
+      ccs_log "gateway ready: $profile"
+      exit 0
+    fi
+    ccs_log "gateway $profile did not answer on ${health:-$probe}"
+    exit 1
+    ;;
+
+  idle-stop)
+    now=$(date +%s)
+    for profile in $(ccs_profiles); do
+      down=$(field "$profile" CCS_PROFILE_DOWN)
+      probe=$(field "$profile" CCS_PROFILE_PROBE)
+      [ -z "$down" ] && continue
+      stamp="$IDLEDIR/$profile"
+      if in_use "$profile"; then
+        rm -f "$stamp"
+        continue
+      fi
+      listening "$probe" "$(field "$profile" CCS_PROFILE_HEALTH)"         || { rm -f "$stamp"; continue; }
+      if [ ! -f "$stamp" ]; then
+        printf '%s\n' "$now" > "$stamp"      # start the clock
+        continue
+      fi
+      since=$(cat "$stamp" 2>/dev/null || echo "$now")
+      if [ $((now - since)) -ge "$CCS_GATEWAY_IDLE" ]; then
+        ccs_log "gateway down: $profile (unused ${CCS_GATEWAY_IDLE}s)"
+        sh -c "$down" >/dev/null 2>&1
+        rm -f "$stamp"
+      fi
+    done
+    ;;
+
+  status)
+    printf '%-14s %-18s %-8s %s\n' "PROFILE" "GATEWAY" "STATE" "IN USE BY"
+    for profile in $(ccs_profiles); do
+      probe=$(field "$profile" CCS_PROFILE_PROBE)
+      health=$(field "$profile" CCS_PROFILE_HEALTH)
+      if listening "$probe" "$health"; then state="up"; else state="down"; fi
+      [ -z "$probe" ] && probe="-"
+      users=""
+      for session in $(ccs_sessions); do
+        [ "$(ccs_profile_of "$session")" = "$profile" ] && users="$users $session"
+      done
+      printf '%-14s %-18s %-8s %s\n' "$profile" "$probe" "$state" "${users:- -}"
+    done
+    ;;
+
+  *)
+    echo "Usage: ccs-gateway [status|idle-stop|up <profile>]" >&2
+    exit 1
+    ;;
+esac

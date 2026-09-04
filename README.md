@@ -524,13 +524,41 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:4000
 ANTHROPIC_AUTH_TOKEN=whatever-your-gateway-wants
 ANTHROPIC_API_KEY=
 CCS_PROFILE_MODEL=gemini-flash
+CCS_PROFILE_LABEL="Google API"
+
+# Optional: run the gateway only while something is on this profile.
+CCS_PROFILE_UP="docker start litellm"
+CCS_PROFILE_DOWN="docker stop litellm"
+CCS_PROFILE_HEALTH=http://127.0.0.1:4000/health/liveliness
 ```
+
+Quote any value with a space in it. The file is sourced by the launcher, and
+an unquoted `docker start litellm` sets the variable to `docker` and then tries
+to run `start` — which is exactly what `CCS_PROFILE_LABEL=Google API` had been
+doing, quietly, at every launch.
 
 ```sh
 ccs-profile                     # list profiles and what each session uses
 ccs-profile gemini my-session   # move a session onto one
 ccs-profile -                   # back to your Claude login
 ```
+
+### A gateway you are not using should not be running
+
+The LiteLLM container was the largest thing on this machine — 800 MB, more than
+any Claude session — and it is useful only to sessions on one profile, which is
+usually none of them. So a profile can say how to start and stop its gateway:
+`ccs-launch` brings it up and waits before starting a session on that profile,
+and `ccs-api` sweeps every couple of minutes and stops the ones no live session
+is on. Ten minutes of grace, because switching a session between profiles takes
+the gateway out of use for a few seconds and a cold start costs more than the
+memory does. `ccs-gateway status` shows what is up and who is on it.
+
+Wait for a health check, not an open port. Docker publishes a container's port
+the moment it starts, so a TCP connect succeeded here in 0.27 seconds against a
+gateway that needed eighteen more before it would answer — and a session that
+starts against a port with nothing behind it fails its first request with
+nothing to explain why.
 
 Anything that speaks the Anthropic Messages API works. We use
 [LiteLLM](https://github.com/BerriAI/litellm) in front of Gemini.
