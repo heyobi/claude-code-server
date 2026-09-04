@@ -370,14 +370,21 @@ measured more than once, too — an installed app reports the full screen height
 for its window until the layout settles, which is exactly when a script at the
 end of the body runs.
 
-The message box is a `contenteditable` region rather than a textarea, for one
-reason: iOS puts an accessory bar over the keyboard for form fields — previous,
-next, and a tick — with no way to turn it off, and it costs a bar's height of
-screen above the composer for three controls that do nothing here. A
-contenteditable gets no accessory bar. `plaintext-only` is set from script
-rather than in the markup, because a browser that does not know the value
-treats the whole attribute as invalid and leaves the box uneditable, which is a
-worse failure than a pasted `<b>`.
+The message box is a `contenteditable` region and the composer is not a form,
+both for the same reason: iOS hangs an accessory bar over the keyboard —
+previous, next, and a tick — for editable content, and the arrows have nowhere
+to go when there is one field. There is no API to remove or relabel it, so the
+only thing to try is not looking like a form: no `<textarea>`, no `<form>`
+around it, the send button an ordinary button. `plaintext-only` is set from
+script rather than in the markup, because a browser that does not know the
+value treats the whole attribute as invalid and leaves the box uneditable,
+which is a worse failure than a pasted `<b>`.
+
+Return makes a line. It is the only way to write a second one on a phone, and
+the send button is an inch away; a keyboard with modifiers gets ⌘/Ctrl+Return
+instead. `enterkeyhint` says `enter`, because a key labelled "send" that makes
+a newline is a lie and a key labelled "send" that sends costs you the second
+line.
 
 Whether a keyboard is up is decided by the field's focus as well as the visual
 viewport. The viewport shrinks on some platforms and iOS scrolls the page

@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v39';
+const BUILD = 'v40';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -1390,8 +1390,11 @@ if (text.contentEditable !== 'plaintext-only') {
 
 // It grows by itself now; this only keeps the last line in view.
 text.addEventListener('input', () => toBottom());
+// Return makes a line. It is the only way to write a second one on a phone,
+// and the send button is right there. A keyboard with modifiers gets the
+// shortcut it expects instead.
 text.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('composer').requestSubmit(); }
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
 });
 
 $('attach').onclick = () => { tap(); $('picker').click(); };
@@ -1401,8 +1404,12 @@ $('picker').onchange = async (e) => {
   e.target.value = '';
 };
 
-$('composer').onsubmit = async (e) => {
-  e.preventDefault();
+// Not a form. iOS hangs its accessory bar — previous, next, and a tick —
+// over the keyboard for anything editable inside one, and here the arrows have
+// nowhere to go. The send button and the shortcut call this directly.
+$('send').onclick = () => send();
+
+async function send() {
   tap();
   const ready = tray.filter((x) => x.path);
   const typed = typedText().trim();

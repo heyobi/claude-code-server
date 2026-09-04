@@ -786,27 +786,27 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
   <div id="stream"></div>
   <button class="icon" id="jump" type="button" title="En alta in">↓</button>
 
-  <form id="composer">
+  <div id="composer">
     <div id="dock">
       <div id="tray"></div>
       <div id="queued"></div>
-      <div id="text" contenteditable="true" role="textbox" enterkeyhint="send"
+      <div id="text" contenteditable="true" role="textbox" enterkeyhint="enter"
            aria-multiline="true" aria-label="Mesaj"
            data-placeholder="Mesaj yaz…"></div>
       <div id="controls">
         <button class="icon" id="attach" type="button" title="Ekle">＋</button>
         <button id="modelchip" type="button" title="Model">…</button>
         <span class="fill"></span>
-        <button id="send" type="submit" title="Gönder">↑</button>
+        <button id="send" type="button" title="Gönder">↑</button>
       </div>
     </div>
     <input id="picker" type="file" multiple hidden>
-  </form>
+  </div>
 </div>
 
 <div id="veil"><div id="sheet"></div></div>
 <div id="popveil"><div id="pop"></div></div>
 
-<script src="app.js?v=39"></script>
+<script src="app.js?v=40"></script>
 </body>
 </html>
