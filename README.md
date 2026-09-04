@@ -304,6 +304,28 @@ is called `host-03` again — and it inherits a profile file nobody remembers
 writing. You ask for Claude and quietly get whatever the last tenant used.
 Rename and close now move and delete the whole record.
 
+### Never answer out of a session the user did not pick
+
+The bot kept the active session as a name, and looked it up like this:
+
+```python
+if name and name in tmux_sessions():
+    return name
+for candidate in ccs_sessions():   # fall back to whatever is there
+    set_active(chat_id, candidate)
+```
+
+Switching backends kills a session and brings it back six seconds later. Send a
+message inside that window and the lookup misses, adopts an unrelated session,
+and writes that choice down. You are now talking to a different conversation
+and nothing on screen says so — it looks exactly like the assistant forgetting
+everything you just told it.
+
+A chat now remembers the session id as well as the name. If the name is gone it
+follows the id, since the record moves with a rename; failing that it waits for
+the session to come back. What it never does is answer from a session you did
+not choose.
+
 ### A tmux session exists before Claude is ready
 
 After `ccs-profile` restarts a session, tmux has it back in about a second.

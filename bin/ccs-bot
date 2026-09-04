@@ -110,22 +110,58 @@ STATE.setdefault("active", {})        # chat_id -> session name
 STATE.setdefault("relay_permissions", True)
 STATE.setdefault("msgs", {})           # chat -> [[message_id, sent_at], ...]
 STATE.setdefault("panel", {})          # chat -> the one live panel message
+STATE.setdefault("active_uuid", {})    # chat -> id of that session, to follow renames
 LOCK = threading.Lock()
 
 
-def active_session(chat_id):
-    name = STATE["active"].get(str(chat_id))
-    if name and name in tmux_sessions():
-        return name
-    for candidate in ccs_sessions():   # fall back to whatever is there
+def resolve_session(chat_id):
+    """Find the session this chat is talking to, following it if the pool
+    renamed it. What this must never do is quietly substitute a different
+    session: a restart makes one vanish for a few seconds, and answering out of
+    whatever else happens to be running reads as the session losing its mind."""
+    with LOCK:
+        name = STATE["active"].get(str(chat_id))
+        want = STATE["active_uuid"].get(str(chat_id))
+    live = tmux_sessions()
+    if name:
+        if name in live:
+            return name
+        if want:
+            for candidate in live:      # the record moves with the rename
+                if session_uuid(candidate) == want:
+                    set_active(chat_id, candidate)
+                    return candidate
+        for candidate in live:          # or the name it grew out of
+            if candidate.startswith(name + "-"):
+                set_active(chat_id, candidate)
+                return candidate
+        return None
+    for candidate in ccs_sessions():    # nothing chosen yet, take one
         set_active(chat_id, candidate)
         return candidate
     return None
 
 
+def active_session(chat_id, wait=0.0):
+    """With wait, sit through a restart rather than declaring the session gone."""
+    found = resolve_session(chat_id)
+    if found or not wait:
+        return found
+    began = time.time()
+    while time.time() - began < wait:
+        time.sleep(1.0)
+        _CACHE.pop("sessions", None)
+        found = resolve_session(chat_id)
+        if found:
+            return found
+    return None
+
+
 def set_active(chat_id, name):
+    uuid = session_uuid(name)
     with LOCK:
         STATE["active"][str(chat_id)] = name
+        STATE["active_uuid"][str(chat_id)] = uuid
         save_state(STATE)
 
 
@@ -302,6 +338,18 @@ def edit(chat_id, message_id, text, keyboard=None):
     api("editMessageText", chat_id=chat_id, message_id=message_id,
         text=text, parse_mode="HTML",
         reply_markup={"inline_keyboard": keyboard or []})
+    note_panel_kind(chat_id, message_id, keyboard)
+
+
+PANEL_KIND = {}           # chat -> 'menu' or 'nav', for the panel on screen
+
+
+def note_panel_kind(chat_id, message_id, keyboard):
+    """A panel showing the main menu can be moved to the bottom whenever we
+    like. One showing a half finished choice cannot, so remember which is on
+    screen."""
+    if STATE["panel"].get(str(chat_id)) == message_id:
+        PANEL_KIND[str(chat_id)] = "menu" if keyboard == main_panel() else "nav"
 
 
 def panel(chat_id, text, keyboard=None):
@@ -323,6 +371,7 @@ def panel(chat_id, text, keyboard=None):
         with LOCK:
             STATE["panel"][str(chat_id)] = mid
             save_state(STATE)
+        note_panel_kind(chat_id, mid, keyboard)
 
 
 def esc(text):
@@ -590,7 +639,8 @@ def relay_answer(chat_id, name, start_offset):
             sent_any = True
             last_new = time.time()
         if sent_any and time.time() - last_new > REPLY_QUIET:
-            panel(chat_id, panel_text(chat_id))   # keep the buttons in reach
+            if PANEL_KIND.get(str(chat_id), "menu") == "menu":
+                panel(chat_id, panel_text(chat_id))   # keep buttons in reach
             return
         if not sent_any and not nudged and time.time() - began > 180:
             send(chat_id, "Hala calisiyor, bitince yazacagim.")
@@ -897,6 +947,7 @@ def cmd_close(chat_id, _args):
           session_keyboard("use", None))
     with LOCK:
         STATE["active"].pop(str(chat_id), None)
+        STATE["active_uuid"].pop(str(chat_id), None)
         save_state(STATE)
 
 
@@ -1066,6 +1117,7 @@ def handle_callback(query):
                 _CACHE.pop("sessions", None)
                 with LOCK:
                     STATE["active"].pop(str(chat_id), None)
+                    STATE["active_uuid"].pop(str(chat_id), None)
                     save_state(STATE)
             edit(chat_id, message_id, "Kapatildi: <b>{}</b>".format(esc(name or "-")),
                  keyboard=main_panel())
@@ -1198,9 +1250,10 @@ def handle_message(message):
             send(chat_id, "Bilinmeyen komut. /help")
         return
 
-    session = active_session(chat_id)
+    session = active_session(chat_id, wait=60.0)
     if not session:
-        send(chat_id, "Aktif oturum yok. /sessions ile sec veya /new ile ac.")
+        panel(chat_id, "Aktif oturum kapanmis. Birini sec:",
+              session_keyboard("use", None))
         return
     path = transcript_of(session)
     offset = os.path.getsize(path) if path and os.path.exists(path) else 0
