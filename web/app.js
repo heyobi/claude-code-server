@@ -5,6 +5,10 @@
  * it, so switching backend mid conversation leaves no hole in what you see.
  */
 
+// Shown in the menu. When the phone is running something other than what the
+// server has, that is worth being able to see rather than deduce.
+const BUILD = 'v5';
+
 const $ = (id) => document.getElementById(id);
 const store = {
   get token() { try { return localStorage.getItem('ccs.token') || ''; } catch { return ''; } },
@@ -206,7 +210,7 @@ async function sessionSheet() {
 
 async function menuSheet() {
   await refresh();
-  sheet('Menü', (box) => {
+  sheet('Menü · ' + BUILD, (box) => {
     const grid = document.createElement('div');
     grid.className = 'grid';
     box.appendChild(grid);
@@ -218,13 +222,18 @@ async function menuSheet() {
       if (r.session) openSession(r.session);
     });
     button(grid, '❌ Kapat', null, () => confirmSheet());
-    pushState().then((state) => {
-      button(grid, '🔔 Bildirim', state, async () => {
-        closeSheet();
-        try { await togglePush(); } catch (e) { note('Bildirim kurulamadi: ' + e); }
-        toBottom(true);
-      }, state === 'acik');
+    // Rendered now, labelled later. Behind a promise it went missing entirely
+    // the one time the state check threw, which is exactly when you need it.
+    const bell = button(grid, '🔔 Bildirim', 'bakiliyor…', async () => {
+      closeSheet();
+      try { await togglePush(); } catch (e) { note('Bildirim kurulamadi: ' + e); }
+      toBottom(true);
     });
+    pushState().then((state) => {
+      const sub = bell.querySelector('small');
+      if (sub) sub.textContent = state;
+      if (state === 'acik') bell.classList.add('on');
+    }).catch(() => {});
   });
 }
 
