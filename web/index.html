@@ -22,10 +22,18 @@
   --code: #f1f3f5;
   /* Frosted surfaces. Translucent enough that what scrolls under them shows
      through as colour, opaque enough to read against. */
-  --glass: rgba(255, 255, 255, .68);
+  --glass: rgba(255, 255, 255, .62);
   --glass-edge: rgba(255, 255, 255, .75);
   --glass-shade: rgba(0, 0, 0, .07);
-  --key: rgba(255, 255, 255, .82);
+  --key: rgba(255, 255, 255, .74);
+  /* The rim. Light catches the top of a curved edge and leaves the bottom
+     dark; without both, a translucent box stays a box. */
+  --rim-top: rgba(255, 255, 255, .90);
+  --rim-bottom: rgba(0, 0, 0, .07);
+  --rim-line: rgba(255, 255, 255, .40);
+  --sheen: rgba(255, 255, 255, .34);
+  --cast-near: rgba(0, 0, 0, .10);
+  --cast-far: rgba(0, 0, 0, .10);
   --radius: 14px;
 }
 @media (prefers-color-scheme: dark) {
@@ -39,10 +47,16 @@
     --accent: #6ddba0;
     --warn: #e0b25e;
     --code: #12161a;
-    --glass: rgba(24, 28, 32, .66);
+    --glass: rgba(24, 28, 32, .62);
     --glass-edge: rgba(255, 255, 255, .10);
     --glass-shade: rgba(0, 0, 0, .35);
-    --key: rgba(52, 60, 68, .72);
+    --key: rgba(58, 66, 75, .68);
+    --rim-top: rgba(255, 255, 255, .22);
+    --rim-bottom: rgba(0, 0, 0, .40);
+    --rim-line: rgba(255, 255, 255, .10);
+    --sheen: rgba(255, 255, 255, .09);
+    --cast-near: rgba(0, 0, 0, .45);
+    --cast-far: rgba(0, 0, 0, .35);
   }
 }
 * {
@@ -70,10 +84,10 @@ header {
   position: fixed; top: 0; left: 0; right: 0; z-index: 5;
   padding: calc(env(safe-area-inset-top) + 10px) 12px 10px;
   background: var(--glass);
-  -webkit-backdrop-filter: saturate(180%) blur(22px);
-  backdrop-filter: saturate(180%) blur(22px);
-  border-bottom: 1px solid var(--glass-edge);
-  box-shadow: 0 1px 12px var(--glass-shade);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  backdrop-filter: saturate(180%) blur(24px);
+  border-bottom: .5px solid var(--rim-line);
+  box-shadow: inset 0 -1px 0 0 var(--rim-bottom), 0 2px 14px -6px var(--cast-far);
   display: flex; align-items: center; gap: 10px;
 }
 #who { flex: 1; min-width: 0; }
@@ -87,15 +101,27 @@ header {
    as boxes with an icon in them rather than as buttons. 44px because that is
    the smallest thing a thumb hits reliably. */
 button.icon {
+  position: relative;
   background: var(--key); border: none; color: var(--ink);
   width: 44px; height: 44px; border-radius: 50%; font-size: 19px; flex: none;
   display: flex; align-items: center; justify-content: center;
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-  box-shadow: inset 0 1px 0 var(--glass-edge), 0 1px 4px var(--glass-shade);
-  transition: transform .14s ease, background .14s ease;
+  -webkit-backdrop-filter: blur(16px) saturate(170%);
+  backdrop-filter: blur(16px) saturate(170%);
+  box-shadow:
+    inset 0 1px 0 0 var(--rim-top),
+    inset 0 -1px 0 0 var(--rim-bottom),
+    inset 0 0 0 .5px var(--rim-line),
+    0 1px 2px var(--cast-near),
+    0 6px 16px -6px var(--cast-far);
+  transition: transform .14s ease, filter .14s ease;
+  overflow: hidden;
 }
-button.icon:active { transform: scale(.9); background: var(--line); }
+button.icon::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(180deg, var(--sheen), transparent 48%);
+}
+button.icon:active { transform: scale(.9); filter: brightness(.94); }
 
 /* ---------------------------------------------------------------- stream */
 #stream {
@@ -173,6 +199,36 @@ button.icon:active { transform: scale(.9); background: var(--line); }
   border: 1px solid var(--line); background: var(--bg); color: var(--ink); font-size: 14px;
 }
 
+/* ---------------------------------------------------------------- glass */
+/* One recipe, used everywhere. Four layers, and every one of them is doing
+   something a flat translucent panel does not:
+
+     rim-top     light along the upper edge, as if it were curved
+     rim-bottom  the underside in its own shadow
+     rim-line    a hairline the whole way round, so it has a boundary
+     sheen       a specular gradient across the top third
+
+   Refraction would be a fifth, displacing the backdrop through an SVG filter,
+   but WebKit does not support url() in backdrop-filter, so on the device this
+   is built for it does not exist. */
+.glassy {
+  position: relative;
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  box-shadow:
+    inset 0 1px 0 0 var(--rim-top),
+    inset 0 -1px 0 0 var(--rim-bottom),
+    inset 0 0 0 .5px var(--rim-line),
+    0 1px 2px var(--cast-near),
+    0 10px 28px -8px var(--cast-far);
+}
+.glassy::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(180deg, var(--sheen), transparent 42%);
+}
+.glassy > * { position: relative; }
+
 /* ---------------------------------------------------------------- tasks */
 .sublabel {
   font-size: 12.5px; letter-spacing: .03em; text-transform: uppercase;
@@ -189,12 +245,15 @@ button.icon:active { transform: scale(.9); background: var(--line); }
 /* ---------------------------------------------------------------- files */
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
 .chip {
-  border: 1px solid var(--glass-edge); background: var(--key); color: var(--ink);
+  border: none; background: var(--key); color: var(--ink);
   border-radius: 999px; padding: 8px 14px; font: inherit; font-size: 13px;
   min-height: 36px;
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
-  box-shadow: 0 1px 2px var(--glass-shade), inset 0 1px 0 var(--glass-edge);
+  -webkit-backdrop-filter: blur(12px) saturate(170%);
+  backdrop-filter: blur(12px) saturate(170%);
+  box-shadow:
+    inset 0 1px 0 0 var(--rim-top),
+    inset 0 0 0 .5px var(--rim-line),
+    0 1px 2px var(--cast-near);
   transition: transform .12s ease;
 }
 .chip:active { transform: scale(.95); }
@@ -214,26 +273,40 @@ button.icon:active { transform: scale(.9); background: var(--line); }
   display: flex; gap: 8px; align-items: flex-end;
   padding: 9px 12px calc(env(safe-area-inset-bottom) + 9px);
   background: var(--glass);
-  -webkit-backdrop-filter: saturate(180%) blur(22px);
-  backdrop-filter: saturate(180%) blur(22px);
-  border-top: 1px solid var(--glass-edge);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  backdrop-filter: saturate(180%) blur(24px);
+  border-top: .5px solid var(--rim-line);
+  box-shadow: inset 0 1px 0 0 var(--rim-top), 0 -2px 14px -6px var(--cast-far);
 }
 #text {
   flex: 1; resize: none; max-height: 130px;
-  padding: 11px 14px; border-radius: 20px;
-  border: 1px solid var(--glass-edge); background: var(--key); color: var(--ink);
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
-  box-shadow: inset 0 1px 0 var(--glass-edge);
+  padding: 11px 15px; border-radius: 21px;
+  border: none; background: var(--key); color: var(--ink);
+  -webkit-backdrop-filter: blur(14px) saturate(170%);
+  backdrop-filter: blur(14px) saturate(170%);
+  box-shadow:
+    inset 0 1px 0 0 var(--rim-top),
+    inset 0 0 0 .5px var(--rim-line),
+    inset 0 -1px 0 0 var(--rim-bottom);
   font-family: inherit;
   /* Not 15px: anything under 16 makes iOS zoom the page on focus. */
   font-size: 16px;
 }
 #send {
+  position: relative; overflow: hidden;
   width: 44px; height: 44px; border: none; border-radius: 50%;
   background: var(--accent); color: var(--bg); font-size: 19px; flex: none;
-  box-shadow: 0 2px 8px var(--glass-shade), inset 0 1px 0 rgba(255,255,255,.28);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, .40),
+    inset 0 -1px 0 0 rgba(0, 0, 0, .18),
+    0 2px 6px var(--cast-near),
+    0 8px 20px -8px var(--cast-far);
   transition: transform .12s ease, filter .12s ease;
+}
+#send::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255,255,255,.32), transparent 50%);
 }
 #send:active { transform: scale(.92); filter: brightness(.92); }
 #send:disabled { opacity: .35; }
@@ -277,10 +350,22 @@ button.icon:active { transform: scale(.9); background: var(--line); }
    on this platform looks. Bordering each row separately turned a menu into a
    stack of unrelated boxes. */
 .group {
+  position: relative;
   background: var(--key); border-radius: 16px; overflow: hidden;
   margin-bottom: 12px;
-  box-shadow: inset 0 1px 0 var(--glass-edge), 0 1px 4px var(--glass-shade);
+  box-shadow:
+    inset 0 1px 0 0 var(--rim-top),
+    inset 0 -1px 0 0 var(--rim-bottom),
+    inset 0 0 0 .5px var(--rim-line),
+    0 1px 2px var(--cast-near),
+    0 10px 28px -10px var(--cast-far);
 }
+.group::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none; z-index: 0;
+  background: linear-gradient(180deg, var(--sheen), transparent 90px);
+}
+.group > .row { position: relative; z-index: 1; }
 .row {
   display: flex; align-items: center; gap: 11px; width: 100%;
   min-height: 54px; padding: 13px 16px;
@@ -295,7 +380,11 @@ button.icon:active { transform: scale(.9); background: var(--line); }
 .row.solo {
   background: var(--key); border-radius: 16px; margin-bottom: 10px;
   border-bottom: none;
-  box-shadow: inset 0 1px 0 var(--glass-edge), 0 1px 4px var(--glass-shade);
+  box-shadow:
+    inset 0 1px 0 0 var(--rim-top),
+    inset 0 -1px 0 0 var(--rim-bottom),
+    inset 0 0 0 .5px var(--rim-line),
+    0 1px 2px var(--cast-near);
 }
 .row .grow { flex: 1; min-width: 0; }
 .row small { color: var(--dim); display: block; font-size: 12.5px; margin-top: 1px; }
@@ -309,7 +398,12 @@ button.icon:active { transform: scale(.9); background: var(--line); }
   display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
   background: var(--line); border-radius: 16px; overflow: hidden;
   margin-bottom: 12px;
-  box-shadow: inset 0 1px 0 var(--glass-edge), 0 1px 4px var(--glass-shade);
+  box-shadow:
+    inset 0 1px 0 0 var(--rim-top),
+    inset 0 -1px 0 0 var(--rim-bottom),
+    inset 0 0 0 .5px var(--rim-line),
+    0 1px 2px var(--cast-near),
+    0 10px 28px -10px var(--cast-far);
 }
 .grid .row {
   margin: 0; border: none; border-radius: 0; background: var(--key);
@@ -360,6 +454,6 @@ button.icon:active { transform: scale(.9); background: var(--line); }
 
 <div id="veil"><div id="sheet"></div></div>
 
-<script src="app.js?v=13"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>

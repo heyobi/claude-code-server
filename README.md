@@ -265,6 +265,21 @@ The token is the only thing standing between anyone already on your tailnet and
 a shell on this machine, so treat `~/.config/claude-code-server/api-token` the
 way you would an SSH key. Delete it and restart to roll it.
 
+### Glass, and what a browser can do
+
+The surfaces are frosted the way the platform's are, and the recipe is one class
+used everywhere: a lit rim along the top edge, a shadowed one underneath, a
+hairline all the way round, a specular gradient across the upper third, and a
+two-part shadow — contact and ambient. Blur alone is not glass; those edges are.
+
+The refraction is missing on purpose. Apple's version displaces the backdrop
+through an SVG filter, which the open recreations reproduce with
+`backdrop-filter: url(#displace)` and `feDisplacementMap`. WebKit does not
+support `url()` in `backdrop-filter`
+([bug 245510](https://bugs.webkit.org/show_bug.cgi?id=245510)), so on Safari —
+which is the browser this is built for — it renders as nothing. Chasing it would
+have looked right on the development machine and wrong on the phone.
+
 ### Tasks
 
 A busy session is a running job, so the app shows them that way: what is

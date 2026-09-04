@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v13';
+const BUILD = 'v14';
 
 const $ = (id) => document.getElementById(id);
 const store = {
