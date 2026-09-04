@@ -20,6 +20,12 @@
   --accent: #1f6f4a;
   --warn: #8a5a00;
   --code: #f1f3f5;
+  /* Frosted surfaces. Translucent enough that what scrolls under them shows
+     through as colour, opaque enough to read against. */
+  --glass: rgba(255, 255, 255, .68);
+  --glass-edge: rgba(255, 255, 255, .75);
+  --glass-shade: rgba(0, 0, 0, .07);
+  --key: rgba(255, 255, 255, .82);
   --radius: 14px;
 }
 @media (prefers-color-scheme: dark) {
@@ -33,6 +39,10 @@
     --accent: #6ddba0;
     --warn: #e0b25e;
     --code: #12161a;
+    --glass: rgba(24, 28, 32, .66);
+    --glass-edge: rgba(255, 255, 255, .10);
+    --glass-shade: rgba(0, 0, 0, .35);
+    --key: rgba(52, 60, 68, .72);
   }
 }
 * {
@@ -46,15 +56,21 @@ html, body { height: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--ink);
   font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  display: flex; flex-direction: column;
   overscroll-behavior-y: none;
 }
+/* The bars float over the conversation rather than sitting beside it. Without
+   something passing underneath, a blur has nothing to blur. */
+:root { --bar-top: 62px; --bar-bottom: 74px; }
 
 /* ---------------------------------------------------------------- header */
 header {
-  position: sticky; top: 0; z-index: 5;
+  position: fixed; top: 0; left: 0; right: 0; z-index: 5;
   padding: calc(env(safe-area-inset-top) + 10px) 12px 10px;
-  background: var(--panel); border-bottom: 1px solid var(--line);
+  background: var(--glass);
+  -webkit-backdrop-filter: saturate(180%) blur(22px);
+  backdrop-filter: saturate(180%) blur(22px);
+  border-bottom: 1px solid var(--glass-edge);
+  box-shadow: 0 1px 12px var(--glass-shade);
   display: flex; align-items: center; gap: 10px;
 }
 #who { flex: 1; min-width: 0; }
@@ -64,16 +80,26 @@ header {
 .dot.busy { background: var(--warn); animation: pulse 1s infinite; }
 .dot.off { background: var(--dim); }
 @keyframes pulse { 50% { opacity: .3; } }
-/* 44px is the smallest thing a thumb hits reliably, and these were 38. */
+/* 44px is the smallest thing a thumb hits reliably, and these were 38. The
+   inset highlight along the top edge is what reads as glass rather than as a
+   grey box: a lit rim, a soft drop, and whatever is behind showing through. */
 button.icon {
-  background: var(--bg); border: 1px solid var(--line); color: var(--ink);
-  width: 44px; height: 44px; border-radius: 13px; font-size: 19px; flex: none;
+  background: var(--key); border: 1px solid var(--glass-edge); color: var(--ink);
+  width: 44px; height: 44px; border-radius: 14px; font-size: 19px; flex: none;
   display: flex; align-items: center; justify-content: center;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 1px 3px var(--glass-shade), inset 0 1px 0 var(--glass-edge);
+  transition: transform .12s ease, background .12s ease;
 }
-button.icon:active { background: var(--line); }
+button.icon:active { transform: scale(.94); background: var(--line); }
 
 /* ---------------------------------------------------------------- stream */
-#stream { flex: 1; overflow-y: auto; padding: 12px; -webkit-overflow-scrolling: touch; }
+#stream {
+  position: fixed; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: calc(env(safe-area-inset-top) + var(--bar-top)) 12px
+           calc(env(safe-area-inset-bottom) + var(--bar-bottom));
+}
 .turn { margin: 0 0 12px; max-width: 88%; }
 .turn.user { margin-left: auto; }
 .bubble {
@@ -146,10 +172,15 @@ button.icon:active { background: var(--line); }
 /* ---------------------------------------------------------------- files */
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
 .chip {
-  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
-  border-radius: 999px; padding: 7px 13px; font: inherit; font-size: 13px;
-  min-height: 34px;
+  border: 1px solid var(--glass-edge); background: var(--key); color: var(--ink);
+  border-radius: 999px; padding: 8px 14px; font: inherit; font-size: 13px;
+  min-height: 36px;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 1px 2px var(--glass-shade), inset 0 1px 0 var(--glass-edge);
+  transition: transform .12s ease;
 }
+.chip:active { transform: scale(.95); }
 .bubble.preview .fname {
   font-size: 12.5px; color: var(--dim); margin-bottom: 8px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -162,33 +193,50 @@ button.icon:active { background: var(--line); }
 
 /* ---------------------------------------------------------------- composer */
 #composer {
-  display: flex; gap: 8px; padding: 9px 12px calc(env(safe-area-inset-bottom) + 9px);
-  background: var(--panel); border-top: 1px solid var(--line);
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 5;
+  display: flex; gap: 8px; align-items: flex-end;
+  padding: 9px 12px calc(env(safe-area-inset-bottom) + 9px);
+  background: var(--glass);
+  -webkit-backdrop-filter: saturate(180%) blur(22px);
+  backdrop-filter: saturate(180%) blur(22px);
+  border-top: 1px solid var(--glass-edge);
 }
 #text {
   flex: 1; resize: none; max-height: 130px;
-  padding: 10px 12px; border-radius: 12px;
-  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  padding: 11px 14px; border-radius: 20px;
+  border: 1px solid var(--glass-edge); background: var(--key); color: var(--ink);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  box-shadow: inset 0 1px 0 var(--glass-edge);
   font-family: inherit;
   /* Not 15px: anything under 16 makes iOS zoom the page on focus. */
   font-size: 16px;
 }
 #send {
-  width: 48px; min-height: 44px; border: none; border-radius: 13px;
+  width: 44px; height: 44px; border: none; border-radius: 50%;
   background: var(--accent); color: var(--bg); font-size: 19px; flex: none;
+  box-shadow: 0 2px 8px var(--glass-shade), inset 0 1px 0 rgba(255,255,255,.28);
+  transition: transform .12s ease, filter .12s ease;
 }
-#send:active { filter: brightness(.9); }
+#send:active { transform: scale(.92); filter: brightness(.92); }
+#send:disabled { opacity: .35; }
 #send:disabled { opacity: .4; }
 
 /* ---------------------------------------------------------------- sheet */
 #veil {
-  position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 10;
+  position: fixed; inset: 0; background: rgba(0,0,0,.32); z-index: 10;
   display: none;
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
 }
 #veil.open { display: block; }
 #sheet {
   position: absolute; left: 0; right: 0; bottom: 0;
-  background: var(--panel); border-radius: 20px 20px 0 0;
+  background: var(--glass);
+  -webkit-backdrop-filter: saturate(180%) blur(30px);
+  backdrop-filter: saturate(180%) blur(30px);
+  border-top: 1px solid var(--glass-edge);
+  border-radius: 22px 22px 0 0;
   padding: 8px 14px calc(env(safe-area-inset-bottom) + 16px);
   max-height: 84vh; overflow-y: auto;
   animation: rise .16s ease-out;
@@ -202,12 +250,14 @@ button.icon:active { background: var(--line); }
 #sheet h3 { margin: 0 2px 12px; font-size: 16px; font-weight: 650; }
 .row {
   display: flex; align-items: center; gap: 10px; width: 100%;
-  min-height: 54px; padding: 13px 14px; margin-bottom: 8px;
-  border: 1px solid var(--line); border-radius: 13px;
-  background: var(--bg); color: var(--ink); font: inherit; font-size: 15px;
+  min-height: 54px; padding: 13px 15px; margin-bottom: 8px;
+  border: 1px solid var(--glass-edge); border-radius: 15px;
+  background: var(--key); color: var(--ink); font: inherit; font-size: 15px;
   text-align: left;
+  box-shadow: 0 1px 2px var(--glass-shade), inset 0 1px 0 var(--glass-edge);
+  transition: transform .12s ease;
 }
-.row:active { background: var(--line); }
+.row:active { transform: scale(.985); background: var(--line); }
 .row .grow { flex: 1; min-width: 0; }
 .row small { color: var(--dim); display: block; font-size: 12px; }
 .row.on { border-color: var(--accent); }
@@ -258,6 +308,6 @@ button.icon:active { background: var(--line); }
 
 <div id="veil"><div id="sheet"></div></div>
 
-<script src="app.js?v=9"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>

@@ -380,13 +380,24 @@ is nothing on the far side that would emit a `tool_use` block, so the tool
 catalogue and system prompt are dropped rather than passed along. The work still
 happens — agy does it, in its own workspace.
 
+**It can use its tools, if you let it.** Headless mode cannot prompt for
+permission and the CLI states that settings allow-rules do not apply there, so
+it is every tool or none — `CCS_AGY_ALLOW_TOOLS`, off in the shipped config
+because that is a decision about a machine rather than a preference. With it
+off the executor can only talk; with it on it writes files and runs commands.
+Either way it needs `--add-dir`: without one it invents a scratch project and
+works there, ignoring the directory it was started in, and the file you asked
+for lands somewhere nobody is looking.
+
 **It resumes rather than replays.** Claude Code sends the whole transcript every
 turn; agy keeps the conversation on its side. The bridge maps one to the other
 and sends only the new message, which is the difference between a long session
 costing a little and costing more each time you speak. The map is keyed on the
 transcript id the client already sends, so it survives a rename and a switch to
 another backend, and it is written to disk so it survives a restart of the
-bridge.
+bridge. It records the workspace alongside and empties itself if that changes,
+because a conversation is bound to the project it was created in and resuming
+one keeps that binding whatever directories the new invocation names.
 
 Sessions also launch with `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`. After
 each answer Claude Code asks the model to guess your next message; on your own

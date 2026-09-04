@@ -73,3 +73,9 @@ CCS_APP_NAME=""
 # https: URL; Apple rejects a mailto that is not a routable address with a bare
 # 403, so leave it empty rather than inventing one. Defaults to the project URL.
 CCS_PUSH_CONTACT=""
+
+# Let the Antigravity executor run its own tools: write files, run commands,
+# drive a browser. Headless mode cannot ask for permission and the CLI
+# ignores allow-rules there, so it is all of them or none. Off by default,
+# because that is a decision about a machine rather than a preference.
+CCS_AGY_ALLOW_TOOLS=""

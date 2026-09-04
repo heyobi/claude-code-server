@@ -51,12 +51,21 @@ LOG = False
 def load_convos():
     """Survive a restart of this process. Losing the map is not fatal — the next
     turn replays the transcript and agy picks the thread back up — but on a long
-    session that is an expensive way to say hello."""
+    session that is an expensive way to say hello.
+
+    A conversation is bound to the project it was created in, and resuming one
+    keeps that binding whatever directories the new invocation names. So a
+    change of workspace has to throw the map away, or every session keeps
+    writing into the folder it was first opened in.
+    """
     try:
         with open(CONVOS_FILE, encoding="utf-8") as handle:
-            return json.load(handle)
+            saved = json.load(handle)
     except (OSError, ValueError):
         return {}
+    if saved.pop("__workdir__", WORKDIR) != WORKDIR:
+        return {}
+    return saved
 
 
 def save_convos():
@@ -64,7 +73,7 @@ def save_convos():
         os.makedirs(os.path.dirname(CONVOS_FILE), exist_ok=True)
         tmp = CONVOS_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as handle:
-            json.dump(CONVOS, handle, indent=2)
+            json.dump(dict(CONVOS, __workdir__=WORKDIR), handle, indent=2)
         os.replace(tmp, CONVOS_FILE)
     except OSError:
         pass
@@ -187,9 +196,32 @@ def convo_key(payload, headers=None):
     return "empty"
 
 
+def tools_allowed():
+    """Whether the executor may run its own tools.
+
+    Headless mode cannot ask, and the CLI is explicit that settings
+    allow-rules do not apply there, so this is all of its tools or none of
+    them. That is a real decision about a machine, so it is off unless the
+    config says otherwise."""
+    try:
+        from ccs_common import CFG
+        value = (CFG.get("CCS_AGY_ALLOW_TOOLS") or "").strip().lower()
+        return value in ("1", "true", "yes", "on")
+    except Exception:
+        return False
+
+
 def run_agy(prompt, model, conversation, stream):
     args = [AGY, "--print=" + prompt, "--output-format",
             "stream-json" if stream else "json"]
+    # Without this it invents a scratch project and works there, ignoring the
+    # directory it was started in — the file lands somewhere nobody is looking.
+    args += ["--add-dir", WORKDIR]
+    for extra in (os.environ.get("CCS_EXTRA_DIRS") or "").split():
+        if os.path.isdir(extra):
+            args += ["--add-dir", extra]
+    if tools_allowed():
+        args.append("--dangerously-skip-permissions")
     if model:
         args += ["--model", model]
     if conversation:
