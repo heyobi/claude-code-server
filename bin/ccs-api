@@ -296,7 +296,22 @@ def session_model(profile):
     return (CFG.get("CCS_MODEL") or "").strip()
 
 
-def first_words(path, window=16000):
+def anyone_spoke(path, window=400000):
+    """Whether a person ever said anything in this transcript.
+
+    Not the same question as whether we can read a title off the top of it. A
+    conversation that opens with editor chatter and a pasted file still had
+    somebody in it, and dropping it because the first sixteen kilobytes were
+    all machinery is how an imported conversation disappears.
+    """
+    try:
+        with open(path, "rb") as handle:
+            return b'"type":"user"' in handle.read(window)
+    except OSError:
+        return False
+
+
+def first_words(path, window=64000):
     """What a conversation was about, from the first thing asked in it.
 
     The head, not the tail: an archive row wants the subject, and the tail
@@ -337,6 +352,7 @@ BOILERPLATE = (
     "this session is being continued from a previous",
     "<command-",                     # a slash command, not something anyone said
     "<local-command",
+    "<ide_",                         # the editor telling us what is on screen
 )
 
 
@@ -401,7 +417,9 @@ def past_conversations():
     for at, uuid, full, here in files[:200]:
         topic = first_words(full)
         if not topic:
-            continue                     # opened, never used
+            if not anyone_spoke(full):
+                continue                 # opened, never used
+            topic = "(başlıksız konuşma)"
         rows.append({
             "uuid": uuid, "topic": topic, "at": int(at),
             "size": os.path.getsize(full), "here": here,

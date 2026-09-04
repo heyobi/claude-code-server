@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Bring conversations from another machine into the archive.
+#
+#   ccs-import <label> <file-or-dir>...   copy transcripts in
+#   ccs-import --list                     what has been imported
+#
+# Claude Code keeps every conversation as a JSONL file next to the folder it
+# was held in, and reading one back needs nothing but the file — no login, no
+# gateway, no subscription. So a conversation from any machine can be read
+# here: copy its transcript in and it appears in the archive, labelled with the
+# folder it came from.
+#
+# Imported conversations are read-only, and the archive shows them that way.
+# Resuming one would mean starting a session, a session starts in this server's
+# working directory, and a conversation held on another machine was never in it.
+#
+# From the other machine, over ssh:
+#
+#   scp -r ~/.claude/projects/* server:/tmp/incoming/
+#   ssh server 'ccs-import windows /tmp/incoming'
+#
+# Re-running is how you refresh: a transcript that has grown since is copied
+# again, one that has not is left alone.
+set -uo pipefail
+
+CCS_BIN="$(dirname "$(readlink -f "$0")")"
+# shellcheck source=ccs-common.sh
+. "$CCS_BIN/ccs-common.sh"
+
+PROJECTS="$HOME/.claude/projects"
+
+if [ "${1:-}" = "--list" ]; then
+  printf '%-22s %6s %s\n' "IMPORT" "FILES" "SIZE"
+  for dir in "$PROJECTS"/imported-*/; do
+    [ -d "$dir" ] || continue
+    label=$(basename "$dir")
+    printf '%-22s %6s %s\n' "${label#imported-}" \
+      "$(find "$dir" -name '*.jsonl' | wc -l)" "$(du -sh "$dir" | cut -f1)"
+  done
+  exit 0
+fi
+
+label="${1:-}"
+shift 2>/dev/null || true
+if [ -z "$label" ] || [ $# -eq 0 ]; then
+  echo "usage: ccs-import <label> <file-or-dir>...   (or --list)" >&2
+  exit 1
+fi
+
+label=$(printf '%s' "$label" | tr -cs 'a-zA-Z0-9' '-' | sed 's/^-//; s/-$//')
+target="$PROJECTS/imported-$label"
+mkdir -p "$target"
+
+copied=0
+skipped=0
+same=0
+
+consider() {
+  local src="$1" name dest
+  name=$(basename "$src")
+  case "$name" in *.jsonl) ;; *) return 0 ;; esac
+
+  # A transcript with nothing a person said is a session that was opened and
+  # never used. There are a lot of those and none of them are conversations.
+  if ! grep -q '"type":"user"' "$src" 2>/dev/null; then
+    skipped=$((skipped + 1))
+    return 0
+  fi
+
+  dest="$target/$name"
+  if [ -f "$dest" ] && [ ! "$src" -nt "$dest" ] \
+     && [ "$(stat -c %s "$src")" = "$(stat -c %s "$dest")" ]; then
+    same=$((same + 1))
+    return 0
+  fi
+  cp -p "$src" "$dest" && copied=$((copied + 1))
+}
+
+for path in "$@"; do
+  if [ -d "$path" ]; then
+    while IFS= read -r file; do
+      consider "$file"
+    done < <(find "$path" -name '*.jsonl' -type f)
+  elif [ -f "$path" ]; then
+    consider "$path"
+  else
+    echo "not there: $path" >&2
+  fi
+done
+
+ccs_log "imported $copied into $label ($same unchanged, $skipped empty)"
+echo "Imported $copied conversation(s) into '$label'."
+[ "$same" -gt 0 ] && echo "$same already up to date."
+[ "$skipped" -gt 0 ] && echo "$skipped skipped: nothing was said in them."
+echo "They are in the archive now, read-only, under the folder they were held in."

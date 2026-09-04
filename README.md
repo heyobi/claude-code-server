@@ -121,6 +121,31 @@ which cannot be reversed once a folder has a dash of its own. Conversations
 from another folder can be read but not resumed here — a resume starts a
 session, a session starts in a working directory, and this server has one.
 
+### Conversations from another machine
+
+A transcript is a file and reading one needs nothing else, so a conversation
+held on any machine can be read here. `ccs-import <label> <path>...` copies
+transcripts in; the archive picks them up and shows each under the folder it
+was actually held in, read from the transcript rather than the directory name.
+
+```sh
+scp -r ~/.claude/projects/* server:/tmp/incoming/
+ssh server 'ccs-import windows /tmp/incoming'
+```
+
+Re-running refreshes: a transcript that has grown is copied again, one that has
+not is left alone. Imported conversations are read-only — resuming starts a
+session, a session starts in this server's working directory, and one held on
+another machine was never in it. To actually continue one, put its transcript
+in this workspace's project directory instead and `ccs-resume` it; the history
+comes with it, the working directory does not.
+
+A conversation whose first pages are all editor chatter used to vanish from the
+list, because the title is read off the top and an empty title meant "opened,
+never used". Those are two different questions: the second one is answered by
+whether anyone ever spoke, and a conversation that cannot be titled is listed
+without one rather than hidden.
+
 ### An archive that outlives the subscription
 
 The point of all of this is what happens when the Claude subscription is not
