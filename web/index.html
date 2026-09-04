@@ -97,9 +97,6 @@ body {
    something passing underneath, a blur has nothing to blur. */
 :root {
   --bar-top: 62px; --bar-bottom: 104px;
-  /* What the eye can see, which on iOS is not what the layout thinks. Set from
-     visualViewport; these are only the values before the first measurement. */
-  --vh: 100%; --vtop: 0px;
   --pad-top: env(safe-area-inset-top);
   --pad-bottom: env(safe-area-inset-bottom);
   /* The composer rests on the floor of the visible area. Every version of
@@ -111,21 +108,20 @@ body {
    clear of it. Same at the top: the shell has already been moved down. */
 html.kb { --pad-top: 0px; --pad-bottom: 0px; }
 
-/* Everything lives inside a box the size of the visible viewport, so the
-   composer rests on the top of the keyboard and the header stays on screen.
-   iOS does not resize the layout for the keyboard — it slides the window over
-   it, taking anything fixed to the layout out of view with it. */
-#app {
-  position: fixed; left: 0; right: 0;
-  top: var(--vtop); height: var(--vh);
-}
+/* iOS handles the keyboard itself: it scrolls the page so that whatever is
+   fixed to the bottom of it lands on top of the keys. Sizing a shell to the
+   visual viewport fought that and put the composer back under the keyboard —
+   and the scroll reset that came with it was doing the pushing. The bars are
+   fixed to the viewport again, and the header going off the top while you
+   type is iOS's own behaviour, not something worth breaking typing over. */
+#app { display: contents; }
 
 /* ---------------------------------------------------------------- header */
 /* Not a bar. Two floating controls and a title, with the conversation running
    underneath and dissolving into the background instead of meeting an edge —
    a line across the top is what made it read as a lid over the page. */
 header {
-  position: absolute; top: 0; left: 0; right: 0; z-index: 5;
+  position: fixed; top: 0; left: 0; right: 0; z-index: 5;
   padding: calc(var(--pad-top) + 8px) 10px 62px;
   display: flex; align-items: center; gap: 10px;
   /* Only the controls take touches; the rest is conversation. */
@@ -210,7 +206,7 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 
 /* ---------------------------------------------------------------- stream */
 #stream {
-  position: absolute; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  position: fixed; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   /* Narrower gutters: the text was being squeezed into the middle of the
      screen for no reason. */
@@ -368,10 +364,7 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
    would be the wrong shape for seven short actions. */
 /* Overlays live in the visible area too, so a sheet opened with the keyboard
    up does not run underneath it. */
-#popveil {
-  position: fixed; left: 0; right: 0; top: var(--vtop); height: var(--vh);
-  z-index: 20; display: none;
-}
+#popveil { position: fixed; inset: 0; z-index: 20; display: none; }
 #popveil.open { display: block; }
 #pop {
   position: absolute; right: 10px;
@@ -496,7 +489,7 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
    control, over the composer, showing up only once you are far enough away
    that scrolling back would be work. */
 #jump {
-  position: absolute; z-index: 4; left: 50%;
+  position: fixed; z-index: 4; left: 50%;
   /* Clear of the composer's fade, or it looks like part of it. */
   bottom: calc(var(--dock-floor) + var(--bar-bottom) + 6px);
   width: 40px; height: 40px; font-size: 18px;
@@ -513,7 +506,7 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
    is one, the home indicator when there is not. The fade under it is the
    header's, upside down; a drawn line there cut the conversation in two. */
 #composer {
-  position: absolute; bottom: 0; left: 0; right: 0; z-index: 5;
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 5;
   display: block;
   padding: 8px 10px var(--dock-floor);
 }
@@ -639,7 +632,7 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 
 /* ---------------------------------------------------------------- sheet */
 #veil {
-  position: fixed; left: 0; right: 0; top: var(--vtop); height: var(--vh);
+  position: fixed; inset: 0;
   background: rgba(0,0,0,.32); z-index: 10;
   display: none;
   -webkit-backdrop-filter: blur(3px);
@@ -793,6 +786,6 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 <div id="veil"><div id="sheet"></div></div>
 <div id="popveil"><div id="pop"></div></div>
 
-<script src="app.js?v=31"></script>
+<script src="app.js?v=32"></script>
 </body>
 </html>

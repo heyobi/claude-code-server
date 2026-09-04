@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v31';
+const BUILD = 'v32';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -545,15 +545,32 @@ function menuSheet() {
   $('popveil').classList.add('open');
 }
 
+// Asking the computed style for env(safe-area-inset-bottom) gives you the
+// expression back on some browsers. A one-pixel probe gives you the number.
+function inset() {
+  const probe = document.createElement('div');
+  probe.style.cssText =
+    'position:fixed;bottom:0;left:0;width:1px;visibility:hidden;' +
+    'height:env(safe-area-inset-bottom)';
+  document.body.appendChild(probe);
+  const h = probe.offsetHeight;
+  probe.remove();
+  return h + 'px';
+}
+
 function measurements() {
   const vv = window.visualViewport;
   const dock = $('dock').getBoundingClientRect();
   const foot = getComputedStyle($('composer')).paddingBottom;
+  const home = window.navigator.standalone === true;
   return [
+    'ekran ' + Math.round(window.screen.height),
     'pencere ' + Math.round(window.innerHeight),
     'görünür ' + (vv ? Math.round(vv.height) + '+' + Math.round(vv.offsetTop) : '—'),
     'kutu ' + Math.round(dock.bottom),
     'pay ' + foot,
+    'alt güvenli ' + inset(),
+    home ? 'uygulama' : 'tarayıcı',
   ].join(' · ');
 }
 
@@ -1375,20 +1392,15 @@ function fitViewport() {
   const vv = window.visualViewport;
   const root = document.documentElement;
   if (!vv) return;
-  // Nothing here is scrollable, so a page offset can only be iOS shoving the
-  // document out of the way of the keyboard. Put it back and measure.
-  if (window.scrollY) window.scrollTo(0, 0);
-  const covered = Math.max(0, window.innerHeight - vv.height);
-  const open = covered > 80;             // a keyboard, not a browser chrome nudge
-  // Only the keyboard case needs measuring. With no keyboard the shell is told
-  // to fill the viewport the ordinary way — every measured height we tried
-  // there came back short somewhere and left a strip of nothing under the
-  // composer.
-  root.style.setProperty('--vh', open ? vv.height + 'px' : '100%');
-  root.style.setProperty('--vtop', open ? vv.offsetTop + 'px' : '0px');
+  // Nothing is moved or resized from here. iOS scrolls the page itself to lift
+  // whatever is fixed to the bottom above the keys, and every attempt to
+  // improve on that — sizing a shell to the visual viewport, resetting the
+  // page scroll it had just done — took the composer out from above the
+  // keyboard. All this does now is notice, so the insets can stand down and
+  // the view can stay at the bottom.
+  const open = Math.max(0, window.innerHeight - vv.height) > 80;
   if (open !== root.classList.contains('kb')) {
     root.classList.toggle('kb', open);
-    // Whatever you were reading should still be the thing in front of you.
     requestAnimationFrame(() => toBottom());
   }
 }

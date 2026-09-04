@@ -333,12 +333,13 @@ typing.
 
 The model sits in a pill, not as plain text beside the attach button — a label
 next to a control reads as a caption, and nobody taps a caption. The panel rests on the
-floor of the visible area, with no clearance at all, and the shell is only
-measured when the keyboard is up — every measured height we tried with the
-keyboard down came back short on some device and left a strip of nothing
-underneath. There is a layout readout in the menu for exactly this: a gap
-reported from a phone and reproducible nowhere else is a measurement problem,
-and the phone should be the one doing the measuring. Every version of this that
+floor of the visible area, with no clearance at all, . There is a layout readout in the
+menu — screen, window, visual viewport, where the panel's bottom edge actually
+landed, and whether this is the installed app or a browser tab. A gap reported
+from a phone and reproducible nowhere else is a measurement problem, and the
+phone should be the one doing the measuring. If the window is shorter than the
+screen, the strip underneath is the browser's, and no amount of CSS inside the
+page will reach it. Every version of this that
 kept some of the home indicator's inset read as hovering, and the system draws
 that indicator over content everywhere else too.
 
@@ -594,14 +595,23 @@ composer down behind the keys. That is why the header disappeared while typing
 and the composer floated a thumb's width above the keyboard — `env(safe-area-inset-bottom)`
 still reports the home indicator that the keyboard is now covering.
 
-The fix is to stop trusting the layout viewport. The whole shell is one fixed
-box placed at `visualViewport.offsetTop` and sized to `visualViewport.height`,
-with the header, the conversation and the composer positioned inside it. Then
-the composer's floor is the top of the keyboard when there is one and the home
-indicator when there is not, and the header cannot leave. A class on the root
-element while the keyboard is up zeroes both safe-area insets, because neither
-edge is exposed any more. Overlays are anchored the same way, so a sheet opened
-while typing does not run underneath the keys.
+What it does instead is scroll the page, so that whatever is fixed to the
+bottom of the layout lands on top of the keyboard. That is the right outcome,
+and it arrives for free — the composer was above the keys before anyone touched
+this. The header going off the top is the same scroll seen from the other end.
+
+We tried to do better and made it worse, twice, in the same change: a shell
+sized to `visualViewport` fought the scroll iOS had just done, and a "defensive"
+`window.scrollTo(0, 0)` — added on the theory that a page with `overflow:
+hidden` should never be scrolled — undid the lift on every keyboard event and
+put the composer back underneath the keys. Both are gone. The bars are fixed to
+the viewport, iOS moves them, and the only thing measured from
+`visualViewport` now is whether a keyboard is up at all, so the safe-area insets
+can stand down and the view can stay at the bottom.
+
+The lesson is narrow and worth keeping: when the platform's own handling of
+something already produces the right result, an improvement has to beat it, not
+merely be more explicit than it.
 
 ### The home directory trust trap
 
