@@ -304,6 +304,17 @@ is called `host-03` again — and it inherits a profile file nobody remembers
 writing. You ask for Claude and quietly get whatever the last tenant used.
 Rename and close now move and delete the whole record.
 
+### A failed send is not a send that did not happen
+
+`sendMessage` was retried without markup whenever the call came back not-ok,
+which is right for "unsupported start tag" and wrong for everything else. A
+request that times out may well have arrived; resending it is how one answer
+becomes two identical bubbles.
+
+Retry only when Telegram says it was the markup. Everything else gets logged and
+left alone, and the transcript reader now carries each entry's id so the relay
+can prove it never sends the same message twice. One relay per session, too.
+
 ### Never answer out of a session the user did not pick
 
 The bot kept the active session as a name, and looked it up like this:

@@ -311,9 +311,15 @@ def send(chat_id, text, keyboard=None, parse="HTML"):
         if keyboard and part is text:
             params["reply_markup"] = {"inline_keyboard": keyboard}
         result = api("sendMessage", **params)
-        if not result.get("ok") and parse:          # bad markup, retry as plain
-            params.pop("parse_mode", None)
-            result = api("sendMessage", **params)
+        if not result.get("ok"):
+            why = str(result.get("description", "")).lower()
+            if parse and ("parse" in why or "entity" in why or "tag" in why):
+                params.pop("parse_mode", None)   # our markup, safe to resend
+                result = api("sendMessage", **params)
+            else:
+                # A network failure is not proof the message did not arrive.
+                sys.stderr.write("send failed: {}{}".format(
+                    result.get("description"), chr(10)))
         track(chat_id, (result.get("result") or {}).get("message_id"))
     if keyboard and len(text) > CHUNK:
         tail = api("sendMessage", chat_id=chat_id, text="─" * 3,
@@ -597,22 +603,33 @@ def show_session(chat_id, name, newest=None):
 
 
 def read_from(path, offset):
-    """Return the assistant texts added since offset, and the new offset."""
-    texts = []
+    """Assistant messages added since offset, as (id, text), and the new offset.
+
+    Bytes rather than lines: the file is being appended to while we read it, so
+    the tail is often half a line. That last fragment is left where it is and
+    picked up whole on the next pass, and the id lets the caller be certain it
+    never sends the same message twice."""
+    items = []
     try:
-        with open(path, encoding="utf-8", errors="ignore") as handle:
+        with open(path, "rb") as handle:
             handle.seek(offset)
-            for line in handle:
-                try:
-                    entry = json.loads(line)
-                except ValueError:
-                    continue
-                text = assistant_text(entry)
-                if text:
-                    texts.append(text)
-            return texts, handle.tell()
+            data = handle.read()
     except OSError:
-        return texts, offset
+        return items, offset
+    consumed = data.rfind(b"\n") + 1
+    if consumed <= 0:
+        return items, offset
+    for raw in data[:consumed].splitlines():
+        if not raw.strip():
+            continue
+        try:
+            entry = json.loads(raw.decode("utf-8", "ignore"))
+        except ValueError:
+            continue
+        text = assistant_text(entry)
+        if text:
+            items.append((entry.get("uuid") or text, text))
+    return items, offset + consumed
 
 
 def send_to_session(name, text):
@@ -621,20 +638,39 @@ def send_to_session(name, text):
     tmux("send-keys", "-t", name, "Enter")
 
 
+RELAY_LOCKS = {}
+
+
 def relay_answer(chat_id, name, start_offset):
     """Watch the transcript and forward whatever the session says back."""
     path = transcript_of(name)
     if not path:
         send(chat_id, "Bu oturumun kaydi bulunamadi.")
         return
+    guard = RELAY_LOCKS.setdefault("{}:{}".format(chat_id, name), threading.Lock())
+    if not guard.acquire(blocking=False):
+        sys.stderr.write("already relaying {}{}".format(name, chr(10)))
+        return                       # someone is already listening to this one
+    try:
+        relay_loop(chat_id, name, path, start_offset)
+    finally:
+        guard.release()
+
+
+def relay_loop(chat_id, name, path, start_offset):
     began = last_new = time.time()
     offset = start_offset
     sent_any = False
     nudged = False
+    seen = set()
     while time.time() - began < REPLY_MAX:
         time.sleep(REPLY_POLL)
-        texts, offset = read_from(path, offset)
-        for text in texts:
+        items, offset = read_from(path, offset)
+        for ident, text in items:
+            if ident in seen:
+                sys.stderr.write("duplicate suppressed{}".format(chr(10)))
+                continue
+            seen.add(ident)
             send(chat_id, esc(text))
             sent_any = True
             last_new = time.time()
