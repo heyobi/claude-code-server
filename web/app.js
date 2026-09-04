@@ -33,6 +33,10 @@ async function api(path, options = {}) {
   });
   if (res.status === 401) { gate('Anahtar kabul edilmedi.'); throw new Error('401'); }
   if (!res.ok) throw new Error(await res.text());
+  // An authenticating proxy in front of us answers an expired session with its
+  // own login page, not with our JSON. Reloading hands the browser to it.
+  const kind = res.headers.get('content-type') || '';
+  if (!kind.includes('json')) { location.reload(); throw new Error('auth'); }
   return res.json();
 }
 

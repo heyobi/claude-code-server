@@ -503,6 +503,12 @@ machine in your house. Be deliberate about it.
 - **Auto mode runs most commands without asking.** A vague instruction typed on
   a phone can do more than you meant. Say what you want precisely, or turn auto
   mode off.
+- **Put something that authenticates in front of it, or keep it on the tailnet.**
+  A Cloudflare tunnel with an Access policy is the arrangement we ended up with:
+  the token still guards the API, but nothing reaches the server at all until
+  Cloudflare has established who you are. Worth checking with a request that
+  carries a valid token — it should still be answered with a redirect to the
+  login page, because the outer door does not know or care about the inner one.
 - **Think twice before putting the web app on the public internet.** One
   `tailscale funnel` away is a real temptation, and what it publishes is an
   endpoint that types into a shell running in auto mode. The token is long and
