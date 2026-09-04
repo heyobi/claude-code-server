@@ -106,9 +106,11 @@ the record, so the restore pass leaves it alone. The transcript stays on disk,
 and `ccs-resume` can reopen it whenever you want.
 
 The web app has an archive anyway, because a list you cannot tidy stops being
-readable — but it says what it is. Archived conversations move behind one row
-at the bottom of the list, the sheet that holds them states that they are still
-running, and closing is one tap further. The marker is a `.archived` file
+readable — but it says what it is. The session list carries its filters at the
+top with their counts — all, working, archived — so the archive is somewhere
+you can see rather than somewhere you have to already know about. The archived
+view states that those conversations are still running, and closing is one tap
+further. The marker is a `.archived` file
 beside the session's other records, so it survives a restart, moves with a
 rename, and goes when the session is closed. Archived sessions also stop
 sending notifications: putting a conversation away and then being buzzed by it
@@ -311,6 +313,11 @@ continuing. The fade is two layers — a masked blur with the page colour over i
 — so a browser that will not mask a `backdrop-filter` still carries the text
 off, it just does it without the blur.
 
+The tint is thin the whole way down, buttons included, and never flat at the
+top: what keeps the title readable is the blur under it, not opacity. A blur
+costs nothing in transparency — you still see what is behind the header, you
+just cannot read it, which is all a header needs.
+
 The ramp is measured in pixels from the top, not in percentages of the header.
 The header is as tall as the status bar makes it, so a percentage puts the fade
 across the title on one device and below it on another. It runs over some fifty
@@ -326,7 +333,12 @@ typing.
 
 The model sits in a pill, not as plain text beside the attach button — a label
 next to a control reads as a caption, and nobody taps a caption. The panel rests on the
-floor of the visible area, with no clearance at all. Every version of this that
+floor of the visible area, with no clearance at all, and the shell is only
+measured when the keyboard is up — every measured height we tried with the
+keyboard down came back short on some device and left a strip of nothing
+underneath. There is a layout readout in the menu for exactly this: a gap
+reported from a phone and reproducible nowhere else is a measurement problem,
+and the phone should be the one doing the measuring. Every version of this that
 kept some of the home indicator's inset read as hovering, and the system draws
 that indicator over content everywhere else too.
 

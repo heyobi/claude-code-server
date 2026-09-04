@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v30';
+const BUILD = 'v31';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -387,9 +387,34 @@ async function sessionSheet() {
   const byTime = (a, b) => (b.at || 0) - (a.at || 0);
   const here = known.sessions.filter((s) => !s.archived);
   const away = known.sessions.filter((s) => s.archived).sort(byTime);
+  const busy = here.filter((s) => !s.ready).sort(byTime);
   const top = here.filter((s) => pins.has(s.name)).sort(byTime);
   const rest = here.filter((s) => !pins.has(s.name)).sort(byTime);
   sheet('Oturumlar', (box) => {
+    // The filters are always on screen, with their counts. An archive you have
+    // to already know about is not somewhere you can put things.
+    filters(box, [
+      ['live', 'Tümü', here.length],
+      ['busy', 'Çalışıyor', busy.length],
+      ['archived', '🗄 Arşiv', away.length],
+    ]);
+    if (listFilter === 'archived') {
+      const note = document.createElement('p');
+      note.className = 'note';
+      note.textContent = 'Arşiv listeyi toparlar, oturumu kapatmaz — ' +
+                         'hepsi çalışmaya devam ediyor.';
+      box.appendChild(note);
+      if (!away.length) button(box, 'Arşiv boş', null, () => {});
+      const list = away.length ? group(box) : box;
+      away.forEach((s) => chatRow(list, s, false));
+      return;
+    }
+    if (listFilter === 'busy') {
+      if (!busy.length) button(box, 'Şu an çalışan oturum yok', null, () => {});
+      const list = busy.length ? group(box) : box;
+      busy.forEach((s) => chatRow(list, s, pins.has(s.name)));
+      return;
+    }
     if (top.length) {
       label(box, 'Sabitlenmiş');
       const pinList = group(box);
@@ -398,10 +423,24 @@ async function sessionSheet() {
     }
     const list = group(box);
     rest.forEach((s) => chatRow(list, s, false));
-    if (away.length) {
-      button(box, '🗄 Arşiv', away.length + ' oturum', () => archiveSheet());
-    }
   });
+}
+
+// Which slice of the list you last looked at, for as long as the app is open.
+let listFilter = 'live';
+
+function filters(box, kinds) {
+  const row = document.createElement('div');
+  row.className = 'chips';
+  kinds.forEach(([key, name, count]) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'fchip' + (listFilter === key ? ' on' : '');
+    chip.textContent = name + ' · ' + count;
+    chip.onclick = () => { tap(); listFilter = key; sessionSheet(); };
+    row.appendChild(chip);
+  });
+  box.appendChild(row);
 }
 
 function label(box, words) {
@@ -409,26 +448,6 @@ function label(box, words) {
   el.className = 'sublabel';
   el.textContent = words;
   box.appendChild(el);
-}
-
-// Archived conversations are still running conversations — the tmux session and
-// its process are untouched, which is the one thing the Claude apps' archive
-// does not tell you. So the sheet says it, and closing stays one tap away.
-async function archiveSheet() {
-  await refresh();
-  const away = known.sessions.filter((s) => s.archived)
-    .sort((a, b) => (b.at || 0) - (a.at || 0));
-  sheet('🗄 Arşiv', (box) => {
-    const note = document.createElement('p');
-    note.className = 'note';
-    note.textContent = 'Arşiv listeyi toparlar, oturumu kapatmaz — hepsi ' +
-                       'çalışmaya devam ediyor.';
-    box.appendChild(note);
-    if (!away.length) button(box, 'Arşiv boş', null, () => {});
-    const list = away.length ? group(box) : box;
-    away.forEach((s) => chatRow(list, s, false));
-    button(box, '◀ Oturumlar', null, () => sessionSheet());
-  });
 }
 
 async function setArchived(name, state) {
@@ -475,7 +494,7 @@ function chatRow(list, s, isPinned) {
       e.stopPropagation();
       tap();
       await setArchived(s.name, !s.archived);
-      s.archived ? archiveSheet() : sessionSheet();
+      sessionSheet();
     };
     row.appendChild(box);
   }
@@ -505,17 +524,37 @@ function menuSheet() {
   });
   add('✏️ Yeniden adlandır', () => renameSheet());
   const put = (known.sessions.find((s) => s.name === session) || {}).archived;
-  add(put ? '🗄 Arşivden çıkar' : '🗄 Arşivle',
-      () => setArchived(session, !put),
-      put ? null : 'Listeden kalkar, çalışmaya devam eder');
+  add(put ? '🗄 Arşivden çıkar' : '🗄 Arşivle', async () => {
+    await setArchived(session, !put);
+    // Straight to the list afterwards, on the tab it went to: a thing that
+    // vanishes without showing you where it went is a thing you have lost.
+    listFilter = put ? 'live' : 'archived';
+    sessionSheet();
+  }, put ? null : 'Listeden kalkar, çalışmaya devam eder');
   // Placed now so it keeps its position; the state arrives a moment later.
   const bell = add('🔔 Bildirim', () => togglePush(), 'bakılıyor…');
   pushState().then((state) => {
     const sub = bell.querySelector('small');
     if (sub) sub.textContent = state;
   }).catch(() => {});
+  // The gap under the composer has been reported from a phone three times and
+  // never reproduced anywhere else. This is how the phone gets to say what it
+  // actually measures instead of us guessing at it.
+  add('📐 Yerleşim', () => {}, measurements());
   add('❌ Kapat', () => confirmSheet());
   $('popveil').classList.add('open');
+}
+
+function measurements() {
+  const vv = window.visualViewport;
+  const dock = $('dock').getBoundingClientRect();
+  const foot = getComputedStyle($('composer')).paddingBottom;
+  return [
+    'pencere ' + Math.round(window.innerHeight),
+    'görünür ' + (vv ? Math.round(vv.height) + '+' + Math.round(vv.offsetTop) : '—'),
+    'kutu ' + Math.round(dock.bottom),
+    'pay ' + foot,
+  ].join(' · ');
 }
 
 const closePop = () => $('popveil').classList.remove('open');
@@ -1341,12 +1380,12 @@ function fitViewport() {
   if (window.scrollY) window.scrollTo(0, 0);
   const covered = Math.max(0, window.innerHeight - vv.height);
   const open = covered > 80;             // a keyboard, not a browser chrome nudge
-  // With no keyboard the shell fills the window. Some browsers report a visual
-  // viewport shorter than the window for their own furniture, and believing
-  // them leaves a strip of nothing under the composer.
-  const height = open ? vv.height : Math.max(vv.height, window.innerHeight - vv.offsetTop);
-  root.style.setProperty('--vh', height + 'px');
-  root.style.setProperty('--vtop', vv.offsetTop + 'px');
+  // Only the keyboard case needs measuring. With no keyboard the shell is told
+  // to fill the viewport the ordinary way — every measured height we tried
+  // there came back short somewhere and left a strip of nothing under the
+  // composer.
+  root.style.setProperty('--vh', open ? vv.height + 'px' : '100%');
+  root.style.setProperty('--vtop', open ? vv.offsetTop + 'px' : '0px');
   if (open !== root.classList.contains('kb')) {
     root.classList.toggle('kb', open);
     // Whatever you were reading should still be the thing in front of you.

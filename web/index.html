@@ -39,12 +39,13 @@
   --veilglass: rgba(255, 255, 255, .26);
   /* The page colour, thinned. Used to fade the conversation out under the
      bars rather than cutting it off with an edge. */
-  /* The page colour at four weights. A two-stop fade has a visible shoulder
-     where the ramp begins; the stops in between are what make it a fade. */
-  --veil: rgba(246, 247, 248, .90);
-  --veil-b: rgba(246, 247, 248, .62);
-  --veil-c: rgba(246, 247, 248, .30);
-  --veil-d: rgba(246, 247, 248, .10);
+  /* The page colour at four weights, and thin all the way up: the header is
+     meant to be looked through, including where the buttons are. What keeps
+     the title readable is the blur underneath it, not the tint. */
+  --veil: rgba(246, 247, 248, .52);
+  --veil-b: rgba(246, 247, 248, .34);
+  --veil-c: rgba(246, 247, 248, .16);
+  --veil-d: rgba(246, 247, 248, .05);
   --radius: 14px;
 }
 @media (prefers-color-scheme: dark) {
@@ -70,10 +71,10 @@
     --cast-far: rgba(0, 0, 0, .35);
     --solid: rgba(32, 37, 42, .95);
     --veilglass: rgba(20, 24, 28, .28);
-    --veil: rgba(17, 20, 23, .90);
-    --veil-b: rgba(17, 20, 23, .62);
-    --veil-c: rgba(17, 20, 23, .30);
-    --veil-d: rgba(17, 20, 23, .10);
+    --veil: rgba(17, 20, 23, .52);
+    --veil-b: rgba(17, 20, 23, .34);
+    --veil-c: rgba(17, 20, 23, .16);
+    --veil-d: rgba(17, 20, 23, .05);
   }
 }
 * {
@@ -138,17 +139,20 @@ header::before, header::after {
   content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
 }
 header::before {
-  -webkit-backdrop-filter: blur(14px) saturate(160%);
-  backdrop-filter: blur(14px) saturate(160%);
+  /* Stronger than it was, because the tint above it is much weaker now. A
+     blur costs no opacity: you still see what is behind, you just cannot read
+     it, which is exactly what a header wants. */
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  backdrop-filter: blur(22px) saturate(150%);
   -webkit-mask-image: linear-gradient(180deg, #000 0%,
-                      #000 calc(var(--pad-top) + 52px),
-                      rgba(0, 0, 0, .66) calc(var(--pad-top) + 70px),
-                      rgba(0, 0, 0, .32) calc(var(--pad-top) + 90px),
+                      #000 calc(var(--pad-top) + 46px),
+                      rgba(0, 0, 0, .58) calc(var(--pad-top) + 70px),
+                      rgba(0, 0, 0, .26) calc(var(--pad-top) + 92px),
                       transparent 100%);
   mask-image: linear-gradient(180deg, #000 0%,
-              #000 calc(var(--pad-top) + 52px),
-              rgba(0, 0, 0, .66) calc(var(--pad-top) + 70px),
-              rgba(0, 0, 0, .32) calc(var(--pad-top) + 90px),
+              #000 calc(var(--pad-top) + 46px),
+              rgba(0, 0, 0, .58) calc(var(--pad-top) + 70px),
+              rgba(0, 0, 0, .26) calc(var(--pad-top) + 92px),
               transparent 100%);
 }
 header::after {
@@ -156,11 +160,13 @@ header::after {
      ramp, the more it reads as an edge. In pixels, not percentages: the header
      is as tall as the status bar makes it, and a percentage would put the ramp
      across the title on one device and below it on another. */
+  /* No flat top: the tint thins the whole way down, buttons included, so the
+     conversation shows through the header everywhere rather than starting
+     under a lid. */
   background: linear-gradient(180deg, var(--veil) 0%,
-              var(--veil) calc(var(--pad-top) + 52px),
-              var(--veil-b) calc(var(--pad-top) + 68px),
-              var(--veil-c) calc(var(--pad-top) + 86px),
-              var(--veil-d) calc(var(--pad-top) + 102px),
+              var(--veil-b) calc(var(--pad-top) + 44px),
+              var(--veil-c) calc(var(--pad-top) + 72px),
+              var(--veil-d) calc(var(--pad-top) + 96px),
               transparent 100%);
 }
 #who { flex: 1; min-width: 0; text-align: center; }
@@ -432,6 +438,15 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
   padding: 6px; border-radius: 50%;
 }
 .chatrow .cpin.on { opacity: 1; }
+
+/* Which slice of the list you are looking at. */
+.chips { display: flex; gap: 8px; padding: 2px 2px 12px; overflow-x: auto; }
+.fchip {
+  flex: none; border: none; border-radius: 999px; font: inherit; font-size: 13px;
+  padding: 8px 14px; background: var(--key); color: var(--ink);
+  box-shadow: inset 0 1px 0 0 var(--rim-top), inset 0 0 0 .5px var(--rim-line);
+}
+.fchip.on { background: var(--accent); color: var(--bg); box-shadow: none; }
 .row.on.chatrow .cname { color: var(--accent); }
 
 /* ---------------------------------------------------------------- tasks */
@@ -512,8 +527,8 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
   mask-image: linear-gradient(0deg, #000 0%, #000 58%, transparent 100%);
 }
 #composer::after {
-  background: linear-gradient(0deg, var(--veil) 0%, var(--veil) 62%,
-              var(--veil-c) 84%, transparent 100%);
+  background: linear-gradient(0deg, var(--solid) 0%, var(--solid) 46%,
+              var(--veil-b) 76%, transparent 100%);
 }
 /* One panel: what you are writing on top, what you are writing it with
    underneath. The bar behind it is only a backdrop. */
@@ -778,6 +793,6 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 <div id="veil"><div id="sheet"></div></div>
 <div id="popveil"><div id="pop"></div></div>
 
-<script src="app.js?v=30"></script>
+<script src="app.js?v=31"></script>
 </body>
 </html>
