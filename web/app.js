@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v36';
+const BUILD = 'v37';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -598,9 +598,12 @@ function measurements() {
     'pay ' + foot,
     'güvenli ' + probe('env(safe-area-inset-top)') + '/' +
       probe('env(safe-area-inset-bottom)'),
-    // Zero once the window has been given the whole screen. Anything else
-    // means the status bar is eating the bottom of it.
-    'eksik ' + slackBelow() + 'px',
+    // Zero once the window has been given the whole screen. Anything else is
+    // the installed app still running on the status bar setting it captured
+    // when it was added, so the readout says what to do about it rather than
+    // leaving a number nobody can act on.
+    slackBelow() ? 'eksik ' + slackBelow() + 'px — ana ekrandan silip yeniden ekle'
+                 : 'eksik yok',
     home ? 'uygulama' : 'tarayıcı',
   ].join(' · ');
 }
