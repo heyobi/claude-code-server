@@ -36,6 +36,7 @@
   --cast-far: rgba(0, 0, 0, .10);
   /* For surfaces that float over the page with nothing behind them to frost. */
   --solid: rgba(250, 251, 252, .94);
+  --veilglass: rgba(255, 255, 255, .40);
   --radius: 14px;
 }
 @media (prefers-color-scheme: dark) {
@@ -60,6 +61,7 @@
     --cast-near: rgba(0, 0, 0, .45);
     --cast-far: rgba(0, 0, 0, .35);
     --solid: rgba(32, 37, 42, .95);
+    --veilglass: rgba(20, 24, 28, .40);
   }
 }
 * {
@@ -86,9 +88,11 @@ body {
 header {
   position: fixed; top: 0; left: 0; right: 0; z-index: 5;
   padding: calc(env(safe-area-inset-top) + 10px) 12px 10px;
-  background: var(--glass);
-  -webkit-backdrop-filter: saturate(180%) blur(24px);
-  backdrop-filter: saturate(180%) blur(24px);
+  /* Lighter than the rest: it sits over the conversation all the time, and at
+     the weight the other surfaces use it read as a lid. */
+  background: var(--veilglass);
+  -webkit-backdrop-filter: saturate(170%) blur(30px);
+  backdrop-filter: saturate(170%) blur(30px);
   border-bottom: .5px solid var(--rim-line);
   box-shadow: inset 0 -1px 0 0 var(--rim-bottom), 0 2px 14px -6px var(--cast-far);
   display: flex; align-items: center; gap: 10px;
@@ -620,6 +624,6 @@ button.icon:active { transform: scale(.9); filter: brightness(.94); }
 <div id="veil"><div id="sheet"></div></div>
 <div id="popveil"><div id="pop"></div></div>
 
-<script src="app.js?v=24"></script>
+<script src="app.js?v=25"></script>
 </body>
 </html>

@@ -460,6 +460,14 @@ Either way it needs `--add-dir`: without one it invents a scratch project and
 works there, ignoring the directory it was started in, and the file you asked
 for lands somewhere nobody is looking.
 
+**It reports what it did.** Work inside the executor never reaches the
+transcript — Claude Code is only ever handed the finished answer — so a session
+on this backend looked like it sat silent for two minutes and then spoke. The
+bridge writes each finished tool call to a file named after the transcript, and
+the API serves them as turns of the same shape the transcript produces, so the
+client needs no special case: the same "3 araç" line, opening onto the same
+commands and output.
+
 **It resumes rather than replays.** Claude Code sends the whole transcript every
 turn; agy keeps the conversation on its side. The bridge maps one to the other
 and sends only the new message, which is the difference between a long session

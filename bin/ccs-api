@@ -30,8 +30,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from ccs_common import (                      # noqa: E402  (path set above)
     CFG, HOME, POOLDIR, WORKDIR, _CACHE, cached, ccs, ccs_sessions, next_auto_name,
-    last_words, pane_progress, pane_ready, send_to_session, session_profile, tmux,
-    transcript_of,
+    last_words, pane_progress, pane_ready, send_to_session, session_profile,
+    session_uuid, tmux, transcript_of,
     turns_from,
 )
 import ccs_push                              # noqa: E402  (path set above)
@@ -244,6 +244,43 @@ def manifest():
 
 # --------------------------------------------------------------------------- state
 
+
+def agy_steps(uuid, offset=0):
+    """Tool calls the Antigravity executor made, as turns of the same shape
+    the transcript produces, so a client needs no special case for them.
+    """
+    if not uuid:
+        return [], offset
+    path = os.path.join(HOME, ".claude", "claude-code-server", "agy-steps",
+                        uuid + ".jsonl")
+    turns = []
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(offset)
+            data = handle.read()
+    except OSError:
+        return turns, offset
+    used = data.rfind(b"\n") + 1
+    if used <= 0:
+        return turns, offset
+    for raw in data[:used].splitlines():
+        if not raw.strip():
+            continue
+        try:
+            row = json.loads(raw.decode("utf-8", "ignore"))
+        except ValueError:
+            continue
+        turns.append({
+            "id": row["id"], "role": "tool", "name": row.get("name", "tool"),
+            "input": row.get("input") or {}, "ts": row.get("at", ""),
+        })
+        if row.get("output"):
+            turns.append({
+                "id": row["id"] + ":r", "role": "result",
+                "for": row["id"], "text": row["output"],
+                "error": False, "ts": row.get("at", ""),
+            })
+    return turns, offset + used
 
 def describe(name):
     """A session, and what it is doing.
@@ -581,6 +618,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, {"session": name, "turns": [], "offset": 0,
                                     "profile": session_profile(name)})
         turns, offset = turns_from(path, 0)
+        steps, _ = agy_steps(session_uuid(name))
+        if steps:
+            # Interleaved by time: the executor's steps happened between the
+            # question and the answer, and that is where they belong.
+            turns = sorted(turns + steps, key=lambda t: t.get("ts") or "")
         return self.reply(200, {
             "session": name,
             "turns": turns[-HISTORY_MAX:],
@@ -606,6 +648,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
         path = transcript_of(name)
+        steps_at = 0
         last_beat = time.time()
         was_ready = None
         prompt_shown = None
@@ -625,6 +668,11 @@ class Handler(BaseHTTPRequestHandler):
                     turns, offset = turns_from(path, offset)
                     for turn in turns:
                         self.emit("turn", dict(turn, offset=offset))
+                # The Antigravity executor's own work, which never reaches the
+                # transcript because Claude Code only ever sees the answer.
+                steps, steps_at = agy_steps(session_uuid(name), steps_at)
+                for turn in steps:
+                    self.emit("turn", turn)
 
                 ready = pane_ready(name)
                 if ready != was_ready:

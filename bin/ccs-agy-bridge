@@ -44,6 +44,7 @@ MODELS_TTL = 300
 
 CONVOS = {}            # conversation key -> agy conversation id
 CONVOS_FILE = os.path.join(HOME, ".claude", "claude-code-server", "agy-convos.json")
+STEPS_DIR = os.path.join(HOME, ".claude", "claude-code-server", "agy-steps")
 LOCK = threading.Lock()
 LOG = False
 
@@ -235,6 +236,36 @@ def run_agy(prompt, model, conversation, stream):
 # --------------------------------------------------------------------------- http
 
 
+def note_step(key, step):
+    """Record one finished tool call where the API can find it.
+
+    Work done inside the executor never reaches the transcript — the client
+    only ever sees the finished answer — so a session on this backend looked
+    like it was doing nothing for two minutes and then speaking. The steps go
+    to a file named after the transcript, which is the one identifier both
+    sides already agree on."""
+    if not key.startswith("client:"):
+        return                       # nothing to file it under
+    info = step.get("tool_info") or {}
+    row = {
+        "id": "{}:{}".format(step.get("conversation_id", ""),
+                             step.get("step_index", 0)),
+        "name": step.get("tool_name") or info.get("name") or "tool",
+        "input": info.get("parameters") or {},
+        "output": str(info.get("output") or "")[:4000],
+        "secs": step.get("duration_seconds") or 0,
+        # UTC with the same shape the transcript uses, or the two sort
+        # against each other and the work lands after the answer.
+        "at": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + ".000Z",
+    }
+    try:
+        os.makedirs(STEPS_DIR, exist_ok=True)
+        path = os.path.join(STEPS_DIR, key.split(":", 1)[1] + ".jsonl")
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(row) + "\n")
+    except OSError:
+        pass
+
 def sse(handler, kind, payload):
     blob = "event: {}\ndata: {}\n\n".format(kind, json.dumps(payload))
     handler.wfile.write(blob.encode("utf-8"))
@@ -425,6 +456,9 @@ class Handler(BaseHTTPRequestHandler):
                 kind = event.get("event")
                 if kind == "step_update":
                     step = event.get("step_update") or {}
+                    if (step.get("step_type") == "tool"
+                            and step.get("state") == "DONE"):
+                        note_step(key, step)
                     delta = step.get("text_delta") or ""
                     if delta:
                         sse(self, "content_block_delta", {
