@@ -274,17 +274,37 @@ function keyBytes(base64) {
   return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
 }
 
+// Says why, not just whether. On iOS every one of these can be the answer,
+// and they all look identical from the outside: nothing happens.
 async function pushState() {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return 'yok';
-  if (Notification.permission === 'denied') return 'engelli';
-  const reg = await navigator.serviceWorker.getRegistration();
-  const sub = reg && (await reg.pushManager.getSubscription());
-  return sub ? 'acik' : 'kapali';
+  try {
+    if (!window.isSecureContext) return 'guvenli baglam yok';
+    if (!('serviceWorker' in navigator)) return 'sw destegi yok';
+    if (!('PushManager' in window)) return 'ana ekrana ekle';
+    if (typeof Notification === 'undefined') return 'ana ekrana ekle';
+    if (Notification.permission === 'denied') return 'engelli';
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) return 'sw kayitli degil';
+    const sub = await reg.pushManager.getSubscription();
+    return sub ? 'acik' : 'kapali';
+  } catch (e) {
+    return 'hata: ' + (e && e.name);
+  }
 }
 
 async function togglePush() {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    note('Bu tarayici bildirim desteklemiyor. iOS icin uygulamayi ana ekrana ekle.');
+  if (!('PushManager' in window) || typeof Notification === 'undefined') {
+    note('Bildirim bu baglamda yok. iOS: Paylas > Ana Ekrana Ekle, sonra uygulamadan ac.');
+    return;
+  }
+  // Safari only honours a permission request inside the tap that caused it.
+  // An await first — even one that resolves immediately — spends the gesture,
+  // and the prompt then never appears and never errors either.
+  const permission = Notification.permission === 'default'
+    ? await Notification.requestPermission()
+    : Notification.permission;
+  if (permission !== 'granted') {
+    note('Izin verilmedi (' + permission + '). Ayarlar > Bildirimler.');
     return;
   }
   const reg = await navigator.serviceWorker.ready;
@@ -293,11 +313,6 @@ async function togglePush() {
     await post('/api/push/unsubscribe', { endpoint: existing.endpoint });
     await existing.unsubscribe();
     note('Bildirimler kapatildi.');
-    return;
-  }
-  const permission = await Notification.requestPermission();
-  if (permission !== 'granted') {
-    note('Izin verilmedi. Ayarlar > Bildirimler bolumunden acabilirsin.');
     return;
   }
   const { key } = await api('/api/push/key');

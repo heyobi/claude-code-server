@@ -2,7 +2,7 @@
 <html lang="tr">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>Claude Code Server</title>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#111417">
@@ -33,7 +33,13 @@
     --warn: #e0b25e;
   }
 }
-* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+  /* Kills the double-tap-to-zoom gesture, which on a chat screen only ever
+     fires by accident. */
+  touch-action: manipulation;
+}
 html, body { height: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--ink);
@@ -103,7 +109,9 @@ button.icon {
   flex: 1; resize: none; max-height: 130px;
   padding: 10px 12px; border-radius: 12px;
   border: 1px solid var(--line); background: var(--bg); color: var(--ink);
-  font: inherit;
+  font-family: inherit;
+  /* Not 15px: anything under 16 makes iOS zoom the page on focus. */
+  font-size: 16px;
 }
 #send {
   width: 44px; border: none; border-radius: 12px;
@@ -139,7 +147,8 @@ button.icon {
 #gate { padding: 24px; max-width: 420px; margin: auto; }
 #gate input {
   width: 100%; padding: 12px; border-radius: 12px; margin: 12px 0;
-  border: 1px solid var(--line); background: var(--panel); color: var(--ink); font: inherit;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  font-family: inherit; font-size: 16px;
 }
 #gate button {
   width: 100%; padding: 12px; border-radius: 12px; border: none;
