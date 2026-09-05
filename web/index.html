@@ -94,6 +94,12 @@
 /* One scroller, and it is not the document. A fixed bar drifts on iOS when
    the page itself can move, which is what made the composer slide while
    reading. */
+/* Turning the phone sideways and back left every paragraph a size larger.
+   That is WebKit inflating text when the layout width changes — it is meant to
+   help pages written for a desktop, and this one is written for the phone, so
+   it only ever guesses wrong. Pinning it to 100% keeps the user's own text
+   size setting working while stopping the guess. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 html, body { height: 100%; overflow: hidden; }
 body {
   margin: 0; background: var(--bg); color: var(--ink);
@@ -825,6 +831,6 @@ body.reading #composer { opacity: .35; pointer-events: none; }
 <div id="veil"><div id="sheet"></div></div>
 <div id="popveil"><div id="pop"></div></div>
 
-<script src="app.js?v=45"></script>
+<script src="app.js?v=46"></script>
 </body>
 </html>

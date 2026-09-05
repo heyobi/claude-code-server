@@ -1,7 +1,7 @@
 /* The shell is worth caching so the app opens instantly and survives a moment
  * without the tailnet. Anything under /api never is: stale session state is
  * worse than no session state. */
-const SHELL = 'ccs-shell-v46';
+const SHELL = 'ccs-shell-v47';
 const FILES = ['./', './index.html', './app.js',
                './icon-180.png', './icon-512.png'];
 
