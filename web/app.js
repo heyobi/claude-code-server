@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v48';
+const BUILD = 'v49';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -1340,7 +1340,7 @@ function attachments(text, already) {
 // preview to the stream put the picture you asked to see below everything
 // else — out of sight on a long chat, and still sitting there afterwards.
 // Diagrams already opened over the top; everything else does now too.
-function viewer(title, build) {
+function viewer(title, build, path) {
   const back = document.createElement('div');
   back.className = 'viewer';
   const head = document.createElement('div');
@@ -1351,7 +1351,18 @@ function viewer(title, build) {
   shut.className = 'icon';
   shut.type = 'button';
   shut.textContent = '✕';
-  head.append(name, shut);
+  head.append(name);
+  if (path) {
+    // A way out to a real app. Some things are better read in the reader the
+    // phone already has, and a frame is not where you want to keep anything.
+    const give = document.createElement('button');
+    give.className = 'icon';
+    give.type = 'button';
+    give.textContent = '📤';
+    give.onclick = () => shareFile(path);
+    head.append(give);
+  }
+  head.append(shut);
   const body = document.createElement('div');
   body.className = 'vbody';
   back.append(head, body);
@@ -1365,15 +1376,31 @@ function viewer(title, build) {
   return back;
 }
 
-// A page or a PDF gets its own tab, because that is what they are for.
 function openFile(path, kind) {
   kind = kind || kindOf(path);
-  if (kind === 'page' || kind === 'pdf') {
-    window.open(fileUrl(path), '_blank');
-    return;
-  }
   const name = path.split('/').pop();
   viewer(name, (body) => {
+    // A PDF or a page used to be handed to a new tab. An app opened from the
+    // home screen mostly does not get one — the tap did nothing at all — so
+    // they are rendered here, in a frame. The page is sandboxed without
+    // same-origin: a file from the workspace is not trusted enough to be given
+    // the run of a document that holds the access token.
+    if (kind === 'pdf' || kind === 'page') {
+      // Say something while it comes down. A blank frame on a slow connection
+      // is indistinguishable from the tap having done nothing, which is what
+      // this whole change is fixing.
+      const wait = document.createElement('div');
+      wait.className = 'vwait';
+      wait.textContent = 'açılıyor…';
+      body.appendChild(wait);
+      const frame = document.createElement('iframe');
+      frame.className = 'vframe';
+      if (kind === 'page') frame.setAttribute('sandbox', 'allow-scripts');
+      frame.onload = () => wait.remove();
+      frame.src = fileUrl(path);
+      body.appendChild(frame);
+      return;
+    }
     const tag = { image: 'img', audio: 'audio', video: 'video' }[kind] || '';
     if (tag) {
       const media = document.createElement(tag);
@@ -1390,7 +1417,27 @@ function openFile(path, kind) {
       .then((r) => (r.ok ? r.text() : Promise.reject(r.status)))
       .then((text) => { pre.textContent = text.slice(0, 20000); })
       .catch(() => { pre.textContent = 'Açılamadı.'; });
-  });
+  }, path);
+}
+
+// Hand the file itself to whatever the phone has for it.
+async function shareFile(path) {
+  const name = path.split('/').pop();
+  try {
+    const res = await fetch(fileUrl(path));
+    if (!res.ok) throw new Error(res.status);
+    const blob = await res.blob();
+    const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file] });
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 20000);
+  } catch (e) {
+    // A share sheet closed is not a failure and nothing else is worth saying.
+  }
 }
 
 // Two views: what this conversation touched, and the workspace. The first is
