@@ -344,6 +344,39 @@ def wait_relaunch(name, limit=45.0):
     return wait_ready(name, max(5.0, limit - (time.time() - began)))
 
 
+def blocks_written(path, window=262144):
+    """How many blocks of the current answer are already in the transcript.
+
+    A client that opens a stream halfway through an answer starts counting from
+    nothing, so the preview shows blocks it has already been given as turns —
+    the same paragraph twice, once from history and once as live text. Counting
+    what is already written down before the first tick closes that.
+
+    Read from the tail: a transcript runs to tens of megabytes and only the end
+    of it belongs to the question being answered.
+    """
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as handle:
+            handle.seek(max(0, size - window))
+            data = handle.read()
+    except OSError:
+        return 0
+    count = 0
+    for raw in data.split(b"\n"):
+        if not raw.strip():
+            continue
+        try:
+            entry = json.loads(raw.decode("utf-8", "ignore"))
+        except ValueError:
+            continue
+        if user_text(entry) is not None:
+            count = 0                      # a new question; start again
+        elif entry.get("type") == "assistant" and assistant_text(entry):
+            count += 1
+    return count
+
+
 def last_model(path, window=48000):
     """Which model actually answered in this session, most recently.
 

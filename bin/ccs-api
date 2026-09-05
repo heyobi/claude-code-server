@@ -35,7 +35,7 @@ from ccs_common import (                      # noqa: E402  (path set above)
     next_auto_name,
     last_model, last_words, pane_lines, pane_progress, pane_ready,
     send_to_session,
-    relaunching, session_profile, wait_relaunch, wait_ready,
+    blocks_written, relaunching, session_profile, wait_relaunch, wait_ready,
     session_uuid, tmux, transcript_of,
     turns_from,
 )
@@ -1021,7 +1021,8 @@ class Handler(BaseHTTPRequestHandler):
         steps_at = 0
         quiet_until = 0.0
         held = ""
-        done_blocks = 0
+        # What is already written down does not need previewing again.
+        done_blocks = blocks_written(path) if path else 0
         last_beat = time.time()
         was_ready = None
         prompt_shown = None
