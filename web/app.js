@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v49';
+const BUILD = 'v50';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -868,6 +868,10 @@ function pickModel(provider) {
         closeSheet();
         note('Model değiştiriliyor, oturum yeniden başlıyor…');
         toBottom(true);
+        // It is about to be killed and started again. Saying so here means
+        // anything typed in the meantime waits in the queue instead of being
+        // posted into a session that is not there.
+        setBusy(true);
         await post('/api/profile', { session, profile: provider.profile, model: m });
       });
     });
@@ -943,10 +947,13 @@ async function drain() {
 }
 
 function setBusy(state) {
-  if (busy === state) return;
+  const changed = busy !== state;
   busy = state;
-  paintSend();
-  if (!busy) setTimeout(drain, 400);
+  if (changed) paintSend();
+  // Not only on the change. A session that was relaunched comes back ready
+  // without ever having been seen busy by this client, and a queue that only
+  // drains on a transition would sit there full.
+  if (!busy && queue.length) setTimeout(drain, 400);
 }
 
 /* ------------------------------------------------------------ attachments */
@@ -1676,7 +1683,13 @@ async function send() {
   try {
     await post('/api/message', { session, text: body });
   } catch {
-    note('Gönderilemedi — oturum meşgul olabilir.');
+    // Refused because the session is restarting or mid-turn. Nothing typed
+    // should ever simply disappear: it goes back in the queue and leaves with
+    // the next one.
+    queue.unshift(body);
+    paintQueue();
+    setBusy(true);
+    note('Oturum hazır değil — mesaj sırada bekliyor.');
   }
   toBottom(true);
 };

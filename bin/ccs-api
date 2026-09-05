@@ -33,7 +33,8 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from ccs_common import (                      # noqa: E402  (path set above)
     CFG, HOME, POOLDIR, PROJDIR, WORKDIR, _CACHE, cached, ccs, ccs_sessions,
     next_auto_name,
-    last_words, pane_lines, pane_progress, pane_ready, send_to_session,
+    last_model, last_words, pane_lines, pane_progress, pane_ready,
+    send_to_session,
     session_profile,
     session_uuid, tmux, transcript_of,
     turns_from,
@@ -217,7 +218,11 @@ def set_pool_model(model):
         return False
     lines.append('CCS_MODEL="{}"'.format(model))
     with open(path, "w", encoding="utf-8") as handle:
-        handle.write("\n".join(lines) + "\n")
+        handle.write(chr(10).join(lines) + chr(10))
+    # The config is read once, at startup. Writing the file and not the copy in
+    # memory is why the picker went on saying Opus while the session was quite
+    # clearly running Fable.
+    CFG["CCS_MODEL"] = model
     return True
 
 
@@ -287,15 +292,19 @@ def agy_steps(uuid, offset=0):
             })
     return turns, offset + used
 
-def session_model(profile):
-    """Which model a session is actually asking for.
+def session_model(profile, path=None):
+    """Which model this session is on.
 
-    A gateway profile names it in the env file the launcher sources; the Claude
-    login takes it from the pool config.
+    A gateway profile names it in the env file the launcher sources, and that
+    is per session. The Claude login takes it from the pool config, which is
+    not: it says what the next launch will ask for, so reading it made every
+    chat claim whatever was picked last for one of them. The transcript knows
+    what actually answered.
     """
     if profile and profile != "-":
         return profile_env(profile).get("CCS_PROFILE_MODEL", "")
-    return (CFG.get("CCS_MODEL") or "").strip()
+    said = last_model(path) if path else ""
+    return said or (CFG.get("CCS_MODEL") or "").strip()
 
 
 def anyone_spoke(path, window=400000):
@@ -526,7 +535,7 @@ def describe(name):
     row = {
         "name": name,
         "profile": profile,
-        "model": session_model(profile),
+        "model": session_model(profile, path),
         "archived": archived,
         "ready": ready,
         "last": said,

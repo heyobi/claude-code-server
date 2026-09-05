@@ -316,6 +316,35 @@ def turns_from(path, offset):
         })
     return turns, offset
 
+def last_model(path, window=48000):
+    """Which model actually answered in this session, most recently.
+
+    The pool's configured model is a setting for the next launch, not a fact
+    about a running session: changing it for one chat made every other chat
+    claim the new model while carrying on with the old one. The transcript
+    records what answered, per turn, so that is what gets asked.
+    """
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as handle:
+            handle.seek(max(0, size - window))
+            data = handle.read()
+    except OSError:
+        return ""
+    found = ""
+    for raw in data.split(b"\n"):
+        if b'"model"' not in raw:
+            continue
+        try:
+            entry = json.loads(raw.decode("utf-8", "ignore"))
+        except ValueError:
+            continue
+        model = (entry.get("message") or {}).get("model") or ""
+        if model and model != "<synthetic>":
+            found = model
+    return found
+
+
 def send_to_session(name, text):
     tmux("send-keys", "-t", name, "-l", text)
     time.sleep(0.3)
