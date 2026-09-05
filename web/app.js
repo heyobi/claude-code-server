@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v44';
+const BUILD = 'v45';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -535,6 +535,51 @@ function pastRow(list, row) {
 // session, a session starts in a working directory, and this server has one.
 let reading = null;
 
+// Handing a conversation to someone else. On a phone the share sheet is the
+// right place for it — Messages, Notes, Files and AirDrop are all one tap from
+// there — and it goes as a file rather than a wall of text so it arrives as a
+// document. Markdown because it opens in anything, and because the code blocks
+// the answers are full of survive being pasted.
+async function shareChat(what) {
+  const query = what.uuid
+    ? '/api/export?uuid=' + encodeURIComponent(what.uuid)
+    : '/api/export?session=' + encodeURIComponent(what.session);
+  let blob, name;
+  try {
+    const res = await fetch(query, { headers: { Authorization: 'Bearer ' + TOKEN } });
+    if (!res.ok) throw new Error(res.status);
+    blob = await res.blob();
+    const said = res.headers.get('Content-Disposition') || '';
+    name = (said.match(/filename="([^"]+)"/) || [])[1] || 'konusma.md';
+  } catch (e) {
+    note('Paylaşılamadı.');
+    return;
+  }
+  const file = new File([blob], name, { type: 'text/markdown' });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file] });
+      return;
+    }
+    if (navigator.share) {
+      await navigator.share({ title: name, text: await blob.text() });
+      return;
+    }
+  } catch (e) {
+    // Closing the sheet is not a failure, and nothing else is worth a message.
+    return;
+  }
+  // No share sheet at all: save it instead.
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
 async function readPast(row) {
   closeSheet();
   if (stream) { stream.close(); stream = null; }
@@ -564,6 +609,12 @@ async function readPast(row) {
     back.onclick = () => reopen(row);
     head.appendChild(back);
   }
+  const give = document.createElement('button');
+  give.type = 'button';
+  give.className = 'quiet';
+  give.textContent = '📤 Paylaş';
+  give.onclick = () => shareChat({ uuid: row.uuid });
+  head.appendChild(give);
   el.appendChild(head);
   data.turns.forEach(addTurn);
   if (!data.turns.length) note('Bu konuşmada gösterilecek bir şey yok.');
@@ -673,6 +724,8 @@ function menuSheet() {
   // The gap under the composer has been reported from a phone three times and
   // never reproduced anywhere else. This is how the phone gets to say what it
   // actually measures instead of us guessing at it.
+  add('📤 Paylaş', () => shareChat({ session: session }),
+      'Konuşmayı bir dosya olarak ver');
   add('📐 Yerleşim', () => {}, measurements());
   add('❌ Kapat', () => confirmSheet());
   $('popveil').classList.add('open');

@@ -105,6 +105,26 @@ a reboot the pool resumes the conversation, so it reappears.
 the record, so the restore pass leaves it alone. The transcript stays on disk,
 and `ccs-resume` can reopen it whenever you want.
 
+### Sharing one
+
+The menu hands the conversation over as a Markdown file, through whatever
+share sheet the device has — Messages, Notes, Files, AirDrop are all one tap
+from there. Markdown rather than a screenshot or our own HTML: it opens in
+anything, it is still text afterwards, and the code blocks these answers are
+full of survive being pasted. Tool calls come through as one line each; a
+shared conversation is for reading, and the argument list of a command nobody
+ran is not part of what was said.
+
+It works on an archived conversation too, including one imported from another
+machine, because all it needs is the transcript.
+
+Two things it taught us. The times in a transcript are UTC with a Z on the end,
+and slicing the hour out of the string puts every line three hours out — they
+are converted to the reader's clock. And an HTTP header is latin-1, so a
+filename taken straight from a Turkish question does not fail politely: it
+raises inside `send_header` and the response never arrives. Filenames are
+folded to ASCII.
+
 ### Reading an old conversation costs nothing
 
 A closed conversation is a file. Opening one needs no process, no gateway and

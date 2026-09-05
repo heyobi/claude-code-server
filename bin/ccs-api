@@ -17,6 +17,7 @@ Commands never reach a model, same as the bot: they run ccs-* and tmux.
 """
 
 import argparse
+import datetime
 import glob
 import json
 import mimetypes
@@ -429,6 +430,71 @@ def past_conversations():
     return rows
 
 
+def local_stamp(ts, shape):
+    """A transcript timestamp in the clock of whoever is reading it.
+
+    The file records UTC with a Z on the end. Slicing the string out of it puts
+    the wrong hour on every line of a shared conversation, three hours out here
+    and some other number elsewhere.
+    """
+    try:
+        when = datetime.datetime.strptime((ts or "")[:19], "%Y-%m-%dT%H:%M:%S")
+    except (ValueError, TypeError):
+        return ""
+    return when.replace(tzinfo=datetime.timezone.utc).astimezone().strftime(shape)
+
+
+def as_markdown(turns, title):
+    """A conversation as something to read somewhere else.
+
+    Markdown rather than a screenshot or our own HTML: it opens in anything,
+    it is still the text afterwards, and the code blocks the answers are full
+    of survive being pasted. Tool calls come through as a single line each —
+    a shared conversation is for reading, and the argument list of a shell
+    command nobody ran is not part of what was said.
+    """
+    out = ["# " + title]
+    day = local_stamp(turns[0].get("ts") if turns else "", "%d.%m.%Y")
+    if day:
+        out.append("")
+        out.append("*" + day + "*")
+    out.append("")
+    for turn in turns:
+        role = turn.get("role")
+        when = local_stamp(turn.get("ts"), "%H:%M")
+        if role == "user":
+            out += ["### Soru" + (" · " + when if when else ""), "",
+                    (turn.get("text") or "").strip(), ""]
+        elif role == "assistant":
+            who = turn.get("model") or "asistan"
+            out += ["### " + who + (" · " + when if when else ""), "",
+                    (turn.get("text") or "").strip(), ""]
+        elif role == "tool":
+            first = ""
+            for value in (turn.get("input") or {}).values():
+                if isinstance(value, str) and value.strip():
+                    first = " ".join(value.split())[:70]
+                    break
+            out.append("`{}`{}".format(turn.get("name") or "arac",
+                                       "  " + first if first else ""))
+            out.append("")
+    return (chr(10).join(out)).strip() + chr(10)
+
+
+# HTTP headers are latin-1, and "ı" is not in it: a filename taken straight
+# from a Turkish question crashed the response rather than downloading oddly.
+FOLD = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
+
+
+def safe_filename(stem):
+    folded = (stem or "").translate(FOLD)
+    keep = "".join(c if (c.isascii() and c.isalnum()) or c in "-_" else "-"
+                   for c in folded)
+    while "--" in keep:
+        keep = keep.replace("--", "-")
+    return (keep.strip("-") or "konusma")[:60]
+
+
 def past_path(uuid):
     """Where a past conversation's transcript is, in any folder."""
     if not uuid or not uuid.replace("-", "").isalnum():
@@ -791,6 +857,38 @@ class Handler(BaseHTTPRequestHandler):
             return self.history(query)
         if path == "/api/events":
             return self.events(query)
+        if path == "/api/export":
+            # Either a session that is open or a conversation that is not.
+            named = (query.get("session") or [""])[0]
+            uuid = (query.get("uuid") or [""])[0]
+            if named:
+                if named not in ccs_sessions():
+                    return self.reply(404, {"error": "no such session"})
+                full = transcript_of(named)
+                # "04" is a slot number, not a name. What the conversation was
+                # about is the first thing that was asked in it.
+                title = (first_words(full)[:60] if full else "") or short_name(named)
+            else:
+                full = past_path(uuid)
+                title = first_words(full)[:60] if full else ""
+            if not full:
+                return self.reply(404, {"error": "nothing to export"})
+            turns, _ = turns_from(full, 0)
+            text = as_markdown(turns, title or "Konuşma")
+            body = text.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Disposition",
+                             'attachment; filename="{}.md"'.format(
+                                 safe_filename(title or "konusma")))
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
         if path == "/api/past/turns":
             # Read without starting anything. A closed conversation is a file,
             # and reading a file needs no backend, no subscription and no

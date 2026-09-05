@@ -416,6 +416,10 @@ body.reading #composer { opacity: .35; pointer-events: none; }
   border: none; border-radius: 999px; background: var(--accent); color: var(--bg);
   font: inherit; font-size: 12.5px; padding: 7px 13px; flex: none;
 }
+.archived button.quiet {
+  background: var(--key); color: var(--ink);
+  box-shadow: inset 0 0 0 .5px var(--rim-line);
+}
 
 /* -------------------------------------------------------------- diagrams */
 .bubble .mmd {
@@ -821,6 +825,6 @@ body.reading #composer { opacity: .35; pointer-events: none; }
 <div id="veil"><div id="sheet"></div></div>
 <div id="popveil"><div id="pop"></div></div>
 
-<script src="app.js?v=44"></script>
+<script src="app.js?v=45"></script>
 </body>
 </html>
