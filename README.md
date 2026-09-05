@@ -105,6 +105,22 @@ a reboot the pool resumes the conversation, so it reappears.
 the record, so the restore pass leaves it alone. The transcript stays on disk,
 and `ccs-resume` can reopen it whenever you want.
 
+### A name the rest of the system can find
+
+An upload kept its name as given, spaces and all — and a stored path with a
+space in it is a path nothing downstream can resolve. The pattern that spots a
+file mentioned in a message stops at the space, so `gelen/LazyLoRA Rapor.md`
+was read as `Rapor.md`, which does not exist, so the chip removed itself and
+the attachment vanished from the conversation. It had uploaded perfectly.
+Non-ASCII goes the same way, because the browser's `\w` is ASCII. Names are
+folded on the way in.
+
+`ccs-check` exercises this whole path — upload, list, serve back byte for byte,
+and find again with the same pattern the browser uses — for every kind of file
+the app claims to handle, including the names that have caught us out. It
+cleans up after itself and exits non-zero on a failure. Written after one too
+many of these arrived as "I couldn't attach a file".
+
 ### Sharing one
 
 The menu hands the conversation over as a Markdown file, through whatever

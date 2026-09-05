@@ -495,6 +495,28 @@ def as_markdown(turns, title):
 FOLD = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
 
 
+def safe_upload_name(name):
+    """A name the rest of the system can actually refer to.
+
+    Spaces were allowed through, and a stored path with a space in it is a path
+    nothing downstream can find: the pattern that spots a file in a message
+    stops at the space, so "gelen/LazyLoRA Rapor.md" was read as "Rapor.md",
+    which does not exist — the attachment uploaded fine and then vanished from
+    the conversation. Non-ASCII goes the same way, because the pattern in the
+    browser uses \\w, and that is ASCII there.
+    """
+    stem, ext = os.path.splitext(name.translate(FOLD))
+    ext = "".join(c for c in ext if c.isascii() and (c.isalnum() or c == "."))[:12]
+    stem = "".join(c if c.isascii() and (c.isalnum() or c in "._-") else "-"
+                   for c in stem)
+    while "--" in stem:
+        stem = stem.replace("--", "-")
+    stem = stem.strip("-.")[:70]
+    if not stem:
+        stem = "dosya-{}".format(int(time.time()))
+    return stem + ext
+
+
 def safe_filename(stem):
     folded = (stem or "").translate(FOLD)
     keep = "".join(c if (c.isascii() and c.isalnum()) or c in "-_" else "-"
@@ -1255,10 +1277,7 @@ class Handler(BaseHTTPRequestHandler):
         The name comes from the client, so it is treated as hostile: basename
         only, stripped, and the result still has to land inside the workspace.
         """
-        name = os.path.basename((query.get("name") or ["dosya"])[0])
-        name = "".join(c for c in name if c.isalnum() or c in "._- ")[:80].strip()
-        if not name or name.startswith("."):
-            name = "dosya-{}".format(int(time.time()))
+        name = safe_upload_name(os.path.basename((query.get("name") or ["dosya"])[0]))
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0 or length > FILE_MAX:
             return self.reply(413, {"error": "size"})

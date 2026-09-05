@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Exercise the file path end to end and say what broke.
+
+    ccs-check
+
+Uploads one file of every kind the app claims to handle — including the names
+that have caught us out, the ones with spaces and Turkish letters — then checks
+that each one can be listed, served back byte for byte, and, crucially, found
+again by the pattern the browser uses to spot a file mentioned in a message.
+That last one is where an upload that worked perfectly still ended up invisible.
+
+Everything it makes, it removes.
+"""
+
+import base64
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+BASE = "http://127.0.0.1:{}".format(os.environ.get("CCS_API_PORT", "8787"))
+
+# The same shape the browser uses, so a disagreement shows up here first.
+FILEISH = re.compile(
+    r"(?:^|[\s(`\"'>])(/?(?:[\w.-]+/)*[\w.-]+\."
+    r"(?:png|jpe?g|gif|webp|svg|avif|mp3|wav|ogg|m4a|flac|mp4|webm|mov|pdf|html?"
+    r"|md|csv|json|txt|log|py|js|ts|sh|ya?ml))(?=$|[\s)`\"'.,:;])", re.I)
+
+PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQ"
+    "DwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
+CASES = [
+    ("deneme.md", b"# baslik\n"),
+    ("deneme.txt", b"metin\n"),
+    ("deneme.json", b'{"a":1}\n'),
+    ("deneme.csv", b"a,b\n"),
+    ("deneme.py", b"print(1)\n"),
+    ("deneme.sh", b"echo 1\n"),
+    ("deneme.yaml", b"a: 1\n"),
+    ("deneme.log", b"satir\n"),
+    ("deneme.html", b"<p>hi</p>"),
+    ("deneme.png", PNG),
+    # The ones that have bitten us.
+    ("Bosluklu Ad 2026.md", b"# bosluk\n"),
+    ("ozel karakter cogu.pdf", b"%PDF-1.4\n"),
+]
+
+
+def token():
+    out = subprocess.run([os.path.join(HERE, "ccs-api"), "--print-token"],
+                         capture_output=True, text=True)
+    return out.stdout.strip()
+
+
+def call(path, data=None, method=None):
+    request = urllib.request.Request(BASE + path, data=data, method=method)
+    request.add_header("Authorization", "Bearer " + TOKEN)
+    if data is not None:
+        request.add_header("Content-Type", "application/octet-stream")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as answer:
+            return answer.status, answer.read()
+    except urllib.error.HTTPError as bad:
+        return bad.code, bad.read()
+    except OSError as bad:
+        return 0, str(bad).encode()
+
+
+TOKEN = token()
+if not TOKEN:
+    sys.exit("no api token; is ccs-api installed?")
+
+print("%-24s %-7s %-6s %-7s %s" % ("NAME", "UPLOAD", "SERVE", "SAME", "FOUND IN TEXT"))
+made = []
+bad = 0
+for name, body in CASES:
+    code, out = call("/api/upload?name=" + urllib.parse.quote(name), data=body,
+                     method="POST")
+    try:
+        info = json.loads(out)
+    except ValueError:
+        info = {}
+    path = info.get("path", "")
+    if not path:
+        print("%-24s %-7s %s" % (name[:24], code, "-- upload failed"))
+        bad += 1
+        continue
+    made.append(path)
+    scode, got = call("/api/file?path=" + urllib.parse.quote(path))
+    same = got == body
+    # The message the composer would build, read back the way the app reads it.
+    found = FILEISH.findall("Ekli dosya: " + path)
+    ok = same and scode == 200 and found == [path]
+    bad += 0 if ok else 1
+    print("%-24s %-7s %-6s %-7s %s" % (
+        name[:24], "ok" if code == 200 else code,
+        "ok" if scode == 200 else scode,
+        "ok" if same else "NO",
+        path if found == [path] else "NO -> {}".format(found or "nothing")))
+
+code, out = call("/api/files?dir=gelen")
+listed = {e["name"] for e in json.loads(out or b"{}").get("entries", [])}
+missing = [p.split("/")[-1] for p in made if p.split("/")[-1] not in listed]
+print()
+print("not listed:", missing or "none")
+bad += len(missing)
+
+for path in made:
+    full = os.path.join(os.path.expanduser("~"), "calisma", path)
+    try:
+        os.remove(full)
+    except OSError:
+        pass
+
+print("cleaned up", len(made), "files")
+sys.exit(1 if bad else 0)
