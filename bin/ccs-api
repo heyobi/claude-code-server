@@ -1011,6 +1011,7 @@ class Handler(BaseHTTPRequestHandler):
         path = transcript_of(name)
         steps_at = 0
         quiet_until = 0.0
+        held = ""
         last_beat = time.time()
         was_ready = None
         prompt_shown = None
@@ -1037,6 +1038,7 @@ class Handler(BaseHTTPRequestHandler):
                             # preview flashed the last answer under the new
                             # question. Nothing is being said yet anyway.
                             shown = ""
+                            held = ""
                             quiet_until = time.time() + 1.2
                             self.emit("partial", {"text": "", "status": ""})
                 # The Antigravity executor's own work, which never reaches the
@@ -1055,6 +1057,7 @@ class Handler(BaseHTTPRequestHandler):
                                          "profile": session_profile(name)})
                     if ready and shown:
                         shown = ""       # the finished turn replaces the preview
+                        held = ""
                         self.emit("partial", {"text": "", "status": ""})
 
                 # While it is generating, the answer exists only on the pane.
@@ -1062,6 +1065,17 @@ class Handler(BaseHTTPRequestHandler):
                 # session rather than waiting on one.
                 if not ready and time.time() >= quiet_until:
                     live = pane_progress(name, pane)
+                    # The pane goes blank for a moment between redraws — a tool
+                    # box replacing a line of text, say. Blanking the preview
+                    # with it makes the answer flash out and back in for no
+                    # reason: nothing was unsaid. Keep what was there and let
+                    # the status carry the change.
+                    # A character or two is the pane caught mid-redraw, not
+                    # something that was said.
+                    if len(live["text"]) < 3 and held:
+                        live = {"text": held, "status": live["status"]}
+                    else:
+                        held = live["text"]
                     stamp = live["text"] + "|" + live["status"]
                     if stamp != shown:
                         shown = stamp
