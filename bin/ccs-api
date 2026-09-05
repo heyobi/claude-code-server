@@ -1021,6 +1021,7 @@ class Handler(BaseHTTPRequestHandler):
         steps_at = 0
         quiet_until = 0.0
         held = ""
+        done_blocks = 0
         last_beat = time.time()
         was_ready = None
         prompt_shown = None
@@ -1040,6 +1041,8 @@ class Handler(BaseHTTPRequestHandler):
                     turns, offset = turns_from(path, offset)
                     for turn in turns:
                         self.emit("turn", dict(turn, offset=offset))
+                        if turn["role"] == "assistant" and (turn.get("text") or ""):
+                            done_blocks += 1
                         if turn["role"] == "user":
                             # The pane still has the previous answer on it for
                             # a moment after you press send — Claude Code has
@@ -1048,6 +1051,7 @@ class Handler(BaseHTTPRequestHandler):
                             # question. Nothing is being said yet anyway.
                             shown = ""
                             held = ""
+                            done_blocks = 0
                             quiet_until = time.time() + 1.2
                             self.emit("partial", {"text": "", "status": ""})
                 # The Antigravity executor's own work, which never reaches the
@@ -1067,13 +1071,14 @@ class Handler(BaseHTTPRequestHandler):
                     if ready and shown:
                         shown = ""       # the finished turn replaces the preview
                         held = ""
+                        done_blocks = 0
                         self.emit("partial", {"text": "", "status": ""})
 
                 # While it is generating, the answer exists only on the pane.
                 # Reading it there is what makes the client feel connected to a
                 # session rather than waiting on one.
                 if not ready and time.time() >= quiet_until:
-                    live = pane_progress(name, pane)
+                    live = pane_progress(name, pane, done_blocks)
                     # The pane goes blank for a moment between redraws — a tool
                     # box replacing a line of text, say. Blanking the preview
                     # with it makes the answer flash out and back in for no

@@ -413,7 +413,7 @@ CHROME = ("⎿", "auto mode on", "for shortcuts", "esc to interrupt",
           "Tip:", "free reviews left", "to run in background")
 
 
-def pane_progress(name, lines=None):
+def pane_progress(name, lines=None, done=0):
     """What the session is saying right now, before it is written down.
 
     A turn only reaches the transcript once it is finished, so a client reading
@@ -460,12 +460,21 @@ def pane_progress(name, lines=None):
     for index, line in enumerate(lines[:edge]):
         if line.startswith("\u276f"):
             asked = index
+    # One question can be answered in several blocks: a sentence, some tools,
+    # another sentence. Each finishes into the transcript on its own and is
+    # drawn as a real turn — while staying on the pane, where the preview kept
+    # picking it up and showing it a second time underneath itself. So the
+    # blocks already written down are skipped: "done" is how many of them the
+    # caller has already sent as turns since the question.
     start = None
     if asked is not None:
+        seen = 0
         for index in range(asked + 1, len(lines)):
             if lines[index].lstrip().startswith("●"):
-                start = index
-                break
+                if seen == done:
+                    start = index
+                    break
+                seen += 1
         # Nothing said yet — it is still thinking, or running a tool. That is
         # what the spinner is for. Falling back to the newest block anywhere on
         # the pane is what put the *previous* answer under the new question and
