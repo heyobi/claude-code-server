@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v47';
+const BUILD = 'v48';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -160,14 +160,20 @@ function addTurn(turn) {
   wrap.className = 'turn ' + turn.role;
   const time = turn.ts ? new Date(turn.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
   const label = turn.role === 'assistant' ? modelLabel(turn.model) : '';
+  // The path line the composer adds is plumbing: the session finds a file by
+  // its path, so it has to be in the message. It does not have to be read.
+  // The attachment is drawn above the message; the line saying so is noise.
+  const said = turn.role === 'user' ? withoutPaths(turn.text) : turn.text;
   wrap.innerHTML =
-    '<div class="bubble">' + render(turn.text) + '</div>' +
+    (said ? '<div class="bubble">' + render(said) + '</div>' : '') +
     '<div class="meta">' + [label, time].filter(Boolean).join(' · ') + '</div>';
   const shots = pictures(turn.text);
   if (shots) wrap.insertBefore(shots, wrap.firstElementChild);
-  // What is already on screen does not need a button underneath it too.
+  // Above the message, with the pictures. What you attached came before what
+  // you wrote about it, and a control under the bubble reads as belonging to
+  // whatever comes next.
   const bar = attachments(turn.text, shots ? shots.dataset.paths : '');
-  if (bar) wrap.insertBefore(bar, wrap.lastElementChild);
+  if (bar) wrap.insertBefore(bar, wrap.firstElementChild);
   place(wrap, turn.ts);
   drawDiagrams(wrap);
 }
@@ -1267,6 +1273,13 @@ const ICON = { image: '🖼', audio: '🎧', video: '🎬', page: '🌐', pdf: '
 
 // Images named in a message are shown, not described. Everything else becomes
 // a button underneath.
+// dosya or dosyalar — "dosyalar?" would have meant "dosyala" plus an r.
+const ATTACHED = /\n*^Ekli dosya(?:lar)?: .+$/m;
+
+function withoutPaths(text) {
+  return (text || '').replace(ATTACHED, '').trim();
+}
+
 function pictures(text) {
   const found = [];
   let m;
