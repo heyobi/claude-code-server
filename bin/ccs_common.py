@@ -409,7 +409,13 @@ def pane_progress(name, lines=None):
             if lines[index].lstrip().startswith("●"):
                 start = index
                 break
-    if start is None:
+        # Nothing said yet — it is still thinking, or running a tool. That is
+        # what the spinner is for. Falling back to the newest block anywhere on
+        # the pane is what put the *previous* answer under the new question and
+        # kept it there for the whole of a turn that ran tools first.
+        if start is None:
+            return {"text": "", "status": status}
+    else:
         for index, line in enumerate(lines):
             if line.lstrip().startswith("●"):
                 start = index
