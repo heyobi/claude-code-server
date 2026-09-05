@@ -912,6 +912,7 @@ class Handler(BaseHTTPRequestHandler):
 
         path = transcript_of(name)
         steps_at = 0
+        quiet_until = 0.0
         last_beat = time.time()
         was_ready = None
         prompt_shown = None
@@ -931,6 +932,15 @@ class Handler(BaseHTTPRequestHandler):
                     turns, offset = turns_from(path, offset)
                     for turn in turns:
                         self.emit("turn", dict(turn, offset=offset))
+                        if turn["role"] == "user":
+                            # The pane still has the previous answer on it for
+                            # a moment after you press send — Claude Code has
+                            # not redrawn yet — and sending that as the live
+                            # preview flashed the last answer under the new
+                            # question. Nothing is being said yet anyway.
+                            shown = ""
+                            quiet_until = time.time() + 1.2
+                            self.emit("partial", {"text": "", "status": ""})
                 # The Antigravity executor's own work, which never reaches the
                 # transcript because Claude Code only ever sees the answer.
                 steps, steps_at = agy_steps(session_uuid(name), steps_at)
@@ -952,7 +962,7 @@ class Handler(BaseHTTPRequestHandler):
                 # While it is generating, the answer exists only on the pane.
                 # Reading it there is what makes the client feel connected to a
                 # session rather than waiting on one.
-                if not ready:
+                if not ready and time.time() >= quiet_until:
                     live = pane_progress(name, pane)
                     stamp = live["text"] + "|" + live["status"]
                     if stamp != shown:

@@ -381,8 +381,26 @@ def pane_progress(name, lines=None):
     # it each time a new block appeared: text arrived, vanished, arrived again.
     # The line you typed is drawn with "❯", and so is the input box at the
     # bottom, so the last ten lines are left out of the search.
+    # Where the conversation stops and the input box starts. The box is drawn
+    # as a rule, the line you are typing, and another rule, all at column 0 —
+    # and it holds a "❯" of its own, which is why "the last ❯ is your message"
+    # is not true. Guessing at it by leaving out the last ten lines was worse
+    # than wrong: while a short answer was being written the box was still
+    # inside that margin, so the search fell back to the previous turn and the
+    # preview flipped between this answer and the one before it, twice a
+    # second.
+    edge = len(lines)
+    for index in range(len(lines) - 1, -1, -1):
+        if lines[index].startswith("\u2500"):
+            edge = index
+            for above in range(index - 1, -1, -1):
+                if lines[above].startswith("\u2500"):
+                    edge = above
+                    break
+            break
+
     asked = None
-    for index, line in enumerate(lines[:-10]):
+    for index, line in enumerate(lines[:edge]):
         if line.startswith("\u276f"):
             asked = index
     start = None
