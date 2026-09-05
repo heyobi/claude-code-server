@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v46';
+const BUILD = 'v47';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -165,7 +165,8 @@ function addTurn(turn) {
     '<div class="meta">' + [label, time].filter(Boolean).join(' · ') + '</div>';
   const shots = pictures(turn.text);
   if (shots) wrap.insertBefore(shots, wrap.firstElementChild);
-  const bar = attachments(turn.text);
+  // What is already on screen does not need a button underneath it too.
+  const bar = attachments(turn.text, shots ? shots.dataset.paths : '');
   if (bar) wrap.insertBefore(bar, wrap.lastElementChild);
   place(wrap, turn.ts);
   drawDiagrams(wrap);
@@ -1276,6 +1277,7 @@ function pictures(text) {
   if (!found.length) return null;
   const box = document.createElement('div');
   box.className = 'shots';
+  box.dataset.paths = found.slice(0, 4).join('\n');
   found.slice(0, 4).forEach((path) => {
     const img = document.createElement('img');
     img.onclick = () => openFile(path, 'image');
@@ -1291,10 +1293,14 @@ function pictures(text) {
 }
 
 // Shown under a message that mentioned something openable.
-function attachments(text) {
+function attachments(text, already) {
+  const shown = (already || '').split('\n').filter(Boolean);
   const found = new Map();
   let m;
-  while ((m = FILEISH.exec(text))) found.set(m[1], { path: m[1], kind: kindOf(m[1]) });
+  while ((m = FILEISH.exec(text))) {
+    if (shown.includes(m[1])) continue;
+    found.set(m[1], { path: m[1], kind: kindOf(m[1]) });
+  }
   while ((m = ARTIFACT.exec(text))) found.set(m[0], { url: m[0], kind: 'page' });
   if (!found.size) return null;
   const bar = document.createElement('div');
@@ -1317,37 +1323,61 @@ function attachments(text) {
   return bar;
 }
 
-// Media plays in place; a page or a PDF gets its own tab, because that is what
-// they are for.
+// A file opens over the conversation, not at the end of it. Appending a
+// preview to the stream put the picture you asked to see below everything
+// else — out of sight on a long chat, and still sitting there afterwards.
+// Diagrams already opened over the top; everything else does now too.
+function viewer(title, build) {
+  const back = document.createElement('div');
+  back.className = 'viewer';
+  const head = document.createElement('div');
+  head.className = 'vhead';
+  const name = document.createElement('span');
+  name.textContent = title;
+  const shut = document.createElement('button');
+  shut.className = 'icon';
+  shut.type = 'button';
+  shut.textContent = '✕';
+  head.append(name, shut);
+  const body = document.createElement('div');
+  body.className = 'vbody';
+  back.append(head, body);
+  document.body.appendChild(back);
+  const close = () => back.remove();
+  shut.onclick = close;
+  // Anywhere off the thing itself closes it, which is what a tap outside a
+  // picture means everywhere else.
+  back.onclick = (e) => { if (e.target === back || e.target === body) close(); };
+  build(body, close);
+  return back;
+}
+
+// A page or a PDF gets its own tab, because that is what they are for.
 function openFile(path, kind) {
   kind = kind || kindOf(path);
   if (kind === 'page' || kind === 'pdf') {
     window.open(fileUrl(path), '_blank');
     return;
   }
-  const card = document.createElement('div');
-  card.className = 'turn assistant';
   const name = path.split('/').pop();
-  const tag = { image: 'img', audio: 'audio', video: 'video' }[kind] || '';
-  card.innerHTML = '<div class="bubble preview"><div class="fname">' + esc(name) +
-    '</div>' + (tag ? '<' + tag + (tag === 'img' ? '' : ' controls') + '></' + tag + '>' : '') +
-    '</div><div class="meta"></div>';
-  $('stream').appendChild(card);
-  const media = card.querySelector('img, audio, video');
-  if (media) feed(media, path);
-  if (kind === 'text') {
+  viewer(name, (body) => {
+    const tag = { image: 'img', audio: 'audio', video: 'video' }[kind] || '';
+    if (tag) {
+      const media = document.createElement(tag);
+      if (tag !== 'img') media.controls = true;
+      body.appendChild(media);
+      feed(media, path);
+      return;
+    }
+    const pre = document.createElement('pre');
+    pre.className = 'vtext';
+    pre.textContent = 'açılıyor…';
+    body.appendChild(pre);
     fetch(fileUrl(path))
       .then((r) => (r.ok ? r.text() : Promise.reject(r.status)))
-      .then((body) => {
-        card.querySelector('.bubble').innerHTML =
-          '<div class="fname">' + name + '</div>' +
-          '<div class="code"><pre>' + esc(body.slice(0, 20000)) + '</pre></div>';
-        toBottom(true);
-      })
-      .catch(() => { card.querySelector('.bubble').innerHTML =
-        '<div class="fname">' + name + '</div><p>Acilamadi.</p>'; });
-  }
-  toBottom(true);
+      .then((text) => { pre.textContent = text.slice(0, 20000); })
+      .catch(() => { pre.textContent = 'Açılamadı.'; });
+  });
 }
 
 // Two views: what this conversation touched, and the workspace. The first is
