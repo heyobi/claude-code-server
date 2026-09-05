@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v43';
+const BUILD = 'v44';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -167,8 +167,24 @@ function addTurn(turn) {
   if (shots) wrap.insertBefore(shots, wrap.firstElementChild);
   const bar = attachments(turn.text);
   if (bar) wrap.insertBefore(bar, wrap.lastElementChild);
-  $('stream').appendChild(wrap);
+  place(wrap, turn.ts);
   drawDiagrams(wrap);
+}
+
+// Turns go where their timestamp says, not where they happened to arrive.
+// Sending something while an answer is still being written puts two writers on
+// one transcript, and the order they reach the stream is not always the order
+// they were said in — which showed up as a message sitting above the answer it
+// came after. Walking back from the end costs nothing: all but the rare
+// out-of-order turn stops on the first comparison.
+function place(el, ts) {
+  const stream = $('stream');
+  if (ts) el.dataset.ts = ts;
+  let at = stream.lastElementChild;
+  while (at && at.dataset && at.dataset.ts && ts && at.dataset.ts > ts) {
+    at = at.previousElementSibling;
+  }
+  stream.insertBefore(el, at ? at.nextElementSibling : stream.firstElementChild);
 }
 
 let liveEl = null;
