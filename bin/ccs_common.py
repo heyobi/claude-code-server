@@ -316,6 +316,34 @@ def turns_from(path, offset):
         })
     return turns, offset
 
+RESERVED = os.path.join(STATE_DIR, "reserved")
+
+
+def relaunching(name):
+    """True while a session is being taken down and brought back.
+
+    Switching backend or model does exactly that, and it is not instant: the
+    launcher waits a few seconds so the current turn can finish reporting,
+    then kills tmux and starts again. A message sent into that gap went to a
+    process that was about to die, which is why what you typed right after
+    choosing a model was never seen again. The launcher already claims the name
+    while it works — that claim is the signal.
+    """
+    mark = os.path.join(RESERVED, name)
+    try:
+        return time.time() - os.path.getmtime(mark) < 300
+    except OSError:
+        return False
+
+
+def wait_relaunch(name, limit=45.0):
+    """Wait out a relaunch, then wait for what comes back to be ready."""
+    began = time.time()
+    while relaunching(name) and time.time() - began < limit:
+        time.sleep(0.5)
+    return wait_ready(name, max(5.0, limit - (time.time() - began)))
+
+
 def last_model(path, window=48000):
     """Which model actually answered in this session, most recently.
 

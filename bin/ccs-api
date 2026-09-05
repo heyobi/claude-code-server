@@ -35,7 +35,7 @@ from ccs_common import (                      # noqa: E402  (path set above)
     next_auto_name,
     last_model, last_words, pane_lines, pane_progress, pane_ready,
     send_to_session,
-    session_profile,
+    relaunching, session_profile, wait_relaunch, wait_ready,
     session_uuid, tmux, transcript_of,
     turns_from,
 )
@@ -527,7 +527,7 @@ def describe(name):
     going and how many tokens it has spent, so pass that along rather than
     inventing a progress bar.
     """
-    ready = pane_ready(name)
+    ready = pane_ready(name) and not relaunching(name)
     path = transcript_of(name)
     archived = os.path.exists(os.path.join(POOLDIR, name + ".archived"))
     said, at = last_words(path) if path else ("", 0)
@@ -1059,7 +1059,7 @@ class Handler(BaseHTTPRequestHandler):
                 # One capture, three readers. Polling three times a second
                 # is only affordable because this is not done three times.
                 pane = pane_lines(name)
-                ready = pane_ready(name, pane)
+                ready = pane_ready(name, pane) and not relaunching(name)
                 if ready != was_ready:
                     was_ready = ready
                     self.emit("status", {"ready": ready,
@@ -1123,7 +1123,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(404, {"error": "no such session"})
         if not text:
             return self.reply(400, {"error": "empty"})
-        if not pane_ready(name):
+        # A session being relaunched is still in tmux and still answering the
+        # prompt for a few seconds before it is killed. Sending into that gap
+        # is how a message typed right after choosing a model disappeared: it
+        # went to a process that was about to die. Wait the relaunch out.
+        if relaunching(name):
+            if not wait_relaunch(name):
+                return self.reply(409, {"error": "session restarting"})
+        elif not pane_ready(name) and not wait_ready(name, 25.0):
             return self.reply(409, {"error": "session busy"})
         send_to_session(name, text)
         return self.reply(200, {"ok": True})
