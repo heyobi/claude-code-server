@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Exercise the file path end to end and say what broke.
+"""Exercise the app and say what broke.
 
-    ccs-check
+    ccs-check              everything
+    ccs-check files        uploads, listing, serving, finding again
+    ccs-check app          the web app's own consistency
 
 Uploads one file of every kind the app claims to handle — including the names
 that have caught us out, the ones with spaces and Turkish letters — then checks
@@ -72,6 +74,78 @@ def call(path, data=None, method=None):
         return 0, str(bad).encode()
 
 
+def check_app():
+    """The three numbers, the syntax, and whether what runs is what we wrote.
+
+    A service worker keeps the old files until a client reloads, so markup and
+    script have to be versioned together — a phone running new HTML against an
+    old script is a bug nobody can reproduce on a desktop. And a change made to
+    the deployed copy instead of the source works until the next install and
+    then disappears; comparing them catches that while it is still confusing
+    rather than after it has been forgotten.
+    """
+    bad = 0
+    web_src = os.path.join(os.path.dirname(HERE), "web")
+    if not os.path.isdir(web_src):
+        web_src = os.path.join(os.path.expanduser("~/src/claude-code-server"), "web")
+    web_run = os.path.expanduser("~/.local/share/claude-code-server/web")
+
+    def read(folder, name):
+        try:
+            with open(os.path.join(folder, name), encoding="utf-8") as handle:
+                return handle.read()
+        except OSError:
+            return ""
+
+    app = read(web_src, "app.js")
+    page = read(web_src, "index.html")
+    worker = read(web_src, "sw.js")
+    if not (app and page and worker):
+        print("app      SKIP    no source to check")
+        return 0
+
+    build = re.search(r"const BUILD = 'v(\d+)'", app)
+    asked = re.search(r"app\.js\?v=(\d+)", page)
+    shell = re.search(r"ccs-shell-v(\d+)", worker)
+    got = [m.group(1) if m else "?" for m in (build, asked, shell)]
+    same = got[0] == got[1] and got[0] != "?"
+    print("%-8s %-7s BUILD=%s  index=%s  sw=%s" % (
+        "versions", "ok" if same else "NO", got[0], got[1], got[2]))
+    bad += 0 if same else 1
+
+    node = subprocess.run(["node", "--check", os.path.join(web_src, "app.js")],
+                          capture_output=True, text=True)
+    if node.returncode == 0:
+        print("%-8s %-7s" % ("syntax", "ok"))
+    elif "No such file" in (node.stderr or "") or node.returncode == 127:
+        print("%-8s %-7s node not installed" % ("syntax", "SKIP"))
+    else:
+        print("%-8s %-7s %s" % ("syntax", "NO", (node.stderr or "").strip()[:90]))
+        bad += 1
+
+    if os.path.isdir(web_run):
+        drifted = [name for name in ("app.js", "index.html", "sw.js")
+                   if read(web_src, name) != read(web_run, name)]
+        print("%-8s %-7s %s" % (
+            "deployed", "ok" if not drifted else "NO",
+            "matches source" if not drifted
+            else "differs: " + ", ".join(drifted) + " — run ./install.sh"))
+        bad += 1 if drifted else 0
+    else:
+        print("%-8s %-7s nothing installed" % ("deployed", "SKIP"))
+    return bad
+
+
+WHICH = sys.argv[1] if len(sys.argv) > 1 else "all"
+
+if WHICH in ("all", "app"):
+    trouble = check_app()
+    if WHICH == "app":
+        sys.exit(1 if trouble else 0)
+    print()
+else:
+    trouble = 0
+
 TOKEN = token()
 if not TOKEN:
     sys.exit("no api token; is ccs-api installed?")
@@ -119,4 +193,4 @@ for path in made:
         pass
 
 print("cleaned up", len(made), "files")
-sys.exit(1 if bad else 0)
+sys.exit(1 if bad + trouble else 0)
