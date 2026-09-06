@@ -1022,11 +1022,18 @@ class Handler(BaseHTTPRequestHandler):
         how server-sent events arrive and buffering them would defeat the point
         of having them.
         """
-        peer = data.get("machine") if isinstance(data, dict) else None
+        asked = data.get("machine") if isinstance(data, dict) else None
+        # A machine that names itself is not a machine to forward to. Passing
+        # the field along unchanged made the far end look at its own name, find
+        # no peer by it, and answer "no such machine" — which came back through
+        # here looking like the near end's fault.
+        peer = None if asked == CFG.get("CCS_PREFIX", "") else asked
         peer = peer or owner((data or {}).get("session") if isinstance(data, dict)
                              else (query.get("session") or [""])[0])
         if not peer:
             return False
+        if isinstance(data, dict) and "machine" in data:
+            data = {k: v for k, v in data.items() if k != "machine"}
         body = json.dumps(data).encode() if data is not None else None
         target = path + ("?" + urllib.parse.urlencode(query, doseq=True)
                          if query else "")
