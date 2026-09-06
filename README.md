@@ -944,6 +944,29 @@ session, not enabling the feature.
 More in [docs/troubleshooting.md](docs/troubleshooting.md), including the USB
 enclosure debugging that came out of the same build.
 
+## Tools, for work that is driven rather than typed
+
+Every capability here is a shell command, and a session with Bash needs nothing
+else — which is why `ccs-mcp` was not written first, and why it is not
+connected to anything by default. It earns its place in one case: something
+running unattended. A scheduled job that asks a question on a backend and files
+the answer does not want to compose a command line, read a terminal pane and
+guess when the answer is finished. It wants to call `ask` and be handed the
+text.
+
+```sh
+claude mcp add ziverbey -- ~/.local/share/claude-code-server/bin/ccs-mcp
+```
+
+Seven tools: `sessions`, `ask`, `new_session`, `set_profile`, `close_session`,
+`conversation`, `search_archive`. It speaks MCP over stdio — newline-delimited
+JSON-RPC, nothing on the network, so it does not need a hole in Cloudflare
+Access to exist. Two things worth knowing about the implementation: the session
+list is remembered for a couple of seconds and starting one takes less than
+that, so the cache is dropped after anything that changes it; and searching the
+archive parses the transcripts rather than grepping them, because grep finds
+the phrase inside the JSON around it and reports plumbing.
+
 ## Security
 
 ### A file the workspace holds is not a file we trust

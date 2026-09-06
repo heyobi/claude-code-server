@@ -20,6 +20,7 @@ comment of any of them before guessing.
 | `ccs-gateway status` | gateways, and whether they are up |
 | `ccs-import <label> <path>` | conversations from another machine into the archive |
 | `ccs-check` | exercise the file path end to end and report what broke |
+| `ccs-mcp` | the same things as MCP tools, over stdio; not connected by default |
 
 ## Backends
 
@@ -53,6 +54,24 @@ expensive and answers differently each time. Put the intent in a systemd user
 timer — `systemctl --user edit --force --full <name>.timer` — and let the timer
 run a script. Ask a model again only when the intent changes or something
 unexpected happens.
+
+## Driving this from another session
+
+Everything above is a shell command, which is all a session with Bash needs.
+Work that is *driven* rather than typed — a scheduled job, an agent running
+unattended — wants tools instead, and `ccs-mcp` is those same capabilities as
+MCP over stdio: `sessions`, `ask`, `new_session`, `set_profile`,
+`close_session`, `conversation`, `search_archive`. `ask` sends a question and
+returns the answer rather than the fact of having sent it.
+
+It is not connected to anything. Attach it where it is wanted:
+
+```sh
+claude mcp add ziverbey -- ~/.local/share/claude-code-server/bin/ccs-mcp
+```
+
+A session on the `antigravity` profile answers without spending the
+subscription, which is the point of `set_profile` followed by `ask`.
 
 ## Standing rules
 
