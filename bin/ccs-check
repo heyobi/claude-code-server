@@ -55,9 +55,25 @@ CASES = [
 
 
 def token():
-    out = subprocess.run([os.path.join(HERE, "ccs-api"), "--print-token"],
-                         capture_output=True, text=True)
-    return out.stdout.strip()
+    """Ask whichever copy of ccs-api will actually run.
+
+    Run from a fresh clone, the one next door may not be executable — install.sh
+    is what sets that — so the installed copy is tried too, and failing both it
+    is handed to the interpreter directly.
+    """
+    here = os.path.join(HERE, "ccs-api")
+    there = os.path.expanduser("~/.local/share/claude-code-server/bin/ccs-api")
+    for attempt in ([here], [there], [sys.executable, here]):
+        if not os.path.exists(attempt[-1]):
+            continue
+        try:
+            out = subprocess.run(attempt + ["--print-token"],
+                                 capture_output=True, text=True, timeout=20)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if out.stdout.strip():
+            return out.stdout.strip()
+    return ""
 
 
 def call(path, data=None, method=None):
