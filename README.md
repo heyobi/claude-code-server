@@ -946,6 +946,23 @@ enclosure debugging that came out of the same build.
 
 ## Security
 
+### A file the workspace holds is not a file we trust
+
+`/api/file` served an HTML file out of the workspace as `text/html` on our own
+origin — which is to say, as us. It could read the access token out of local
+storage, and out of its own address as well, since the token rides in the query
+there because an `<img>` cannot send a header. The point of that boundary is
+that it holds when the content is untrusted, and on this machine an agent
+writes files by itself: that is exactly the case the rule is for.
+
+Documents from the workspace are served with `Content-Security-Policy: sandbox`
+now — no origin, no scripts. A report still renders; it cannot act. There is no
+`allow-scripts` escape hatch, deliberately. Everything from `/api/file` also
+carries `nosniff`, so a text file cannot be sniffed into a page, and
+`no-referrer`, so a request leaving one does not take the token with it.
+
+
+
 This gives a chat interface on your phone the ability to run commands on a
 machine in your house. Be deliberate about it.
 
