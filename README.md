@@ -944,6 +944,44 @@ session, not enabling the feature.
 More in [docs/troubleshooting.md](docs/troubleshooting.md), including the USB
 enclosure debugging that came out of the same build.
 
+## More than one machine, one app
+
+A second machine runs the same thing with its own prefix and its own API on
+localhost, and this one forwards to it over an SSH tunnel it keeps open. The
+phone still talks to one address, one Access application, one token. The second
+machine needs no hostname, no tunnel of its own and nothing exposed to the
+network — which is the whole reason for doing it this way instead of running a
+second copy of everything and teaching the app to juggle origins.
+
+Routing needs no table. Every machine prefixes its sessions with its own name,
+so the name already says who owns it: a request carrying `session=goztepe-01`
+is forwarded, one carrying `ziverbey-02` is not, and nothing can fall out of
+step. A request with no session — starting a new one — says `machine` instead.
+Streams are passed through line by line, because that is how server-sent events
+arrive and buffering them would defeat the point.
+
+Set it up with `~/.config/claude-code-server/peers.json`:
+
+```json
+{ "goztepe": { "url": "http://127.0.0.1:8801", "token": "..." } }
+```
+
+and a systemd user unit holding `ssh -N -L 127.0.0.1:8801:127.0.0.1:8787 host`.
+
+Worth being honest about the shape of this: the app is served by the first
+machine, so if that one is down there is no app at all, with or without the
+proxy. Making the second machine independently reachable means giving it its
+own tunnel, hostname and Access application — at which point it is a second app
+for that machine, which is a different thing from what this is.
+
+### A path that works in the shell and not in Python
+
+The config is sourced by the shell tools and parsed by the Python ones, and the
+shell expands `$HOME` for free. `CCS_WORKDIR=$HOME/calisma` therefore started
+sessions in the right directory and pointed every Python reader at a
+`-$HOME-calisma` that does not exist: the sessions ran, and the transcripts were
+invisible. The loader expands it now.
+
 ## Tools, for work that is driven rather than typed
 
 Every capability here is a shell command, and a session with Bash needs nothing

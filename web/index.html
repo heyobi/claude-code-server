@@ -189,6 +189,11 @@ header::after {
   display: flex; gap: 6px; align-items: center; justify-content: center;
 }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+/* Which machine, when there is more than one. */
+#machine {
+  flex: none; padding: 1px 7px; border-radius: 999px;
+  background: var(--line); color: var(--dim); font-size: 11px;
+}
 .dot.busy { background: var(--warn); animation: pulse 1s infinite; }
 .dot.off { background: var(--dim); }
 @keyframes pulse { 50% { opacity: .3; } }
@@ -852,7 +857,7 @@ body.reading #composer { opacity: .35; pointer-events: none; }
     <button class="icon" id="back" title="Oturumlar">‹</button>
     <div id="who">
       <div id="name">—</div>
-      <div id="sub"><span class="dot off"></span><span id="statusText">bağlanıyor…</span></div>
+      <div id="sub"><span class="dot off"></span><span id="machine" hidden></span><span id="statusText">bağlanıyor…</span></div>
     </div>
     <button class="icon" id="btnMenu" title="Menü">⋯</button>
   </header>
@@ -881,6 +886,6 @@ body.reading #composer { opacity: .35; pointer-events: none; }
 <div id="veil"><div id="sheet"></div></div>
 <div id="popveil"><div id="pop"></div></div>
 
-<script src="app.js?v=51"></script>
+<script src="app.js?v=52"></script>
 </body>
 </html>

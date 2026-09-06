@@ -40,6 +40,13 @@ def load_config():
     cfg = load_env(path)
     cfg.setdefault("CCS_PREFIX", os.uname().nodename.split(".")[0])
     cfg.setdefault("CCS_WORKDIR", os.path.join(HOME, "workspace"))
+    # The shell sources this file and expands $HOME and ~ for free; Python does
+    # not, and a path that works for every shell tool while silently pointing
+    # somewhere else for every Python one is a bad afternoon. A workspace of
+    # "$HOME/calisma" made the transcripts invisible and nothing else.
+    for key, value in list(cfg.items()):
+        if isinstance(value, str) and ("$HOME" in value or value.startswith("~")):
+            cfg[key] = os.path.expanduser(os.path.expandvars(value))
     return cfg
 
 

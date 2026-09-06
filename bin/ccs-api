@@ -27,6 +27,9 @@ import secrets
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -547,6 +550,76 @@ def mcp_change(backend, action, name):
     return True
 
 
+# ------------------------------------------------------------------------ peers
+
+# Another machine, reachable over a tunnel this one keeps open. The phone talks
+# to one address and one Access application; anything belonging to the other
+# machine is forwarded from here. That machine needs no hostname, no tunnel and
+# nothing exposed to the network — which is the whole reason for doing it this
+# way rather than running a second copy of everything.
+PEERS_FILE = os.path.join(HOME, ".config", "claude-code-server", "peers.json")
+
+
+def peers():
+    def produce():
+        try:
+            with open(PEERS_FILE, encoding="utf-8") as handle:
+                return json.load(handle)
+        except (OSError, ValueError):
+            return {}
+    return cached("peers", 30.0, produce)
+
+
+def peer_call(peer, path, method="GET", body=None, timeout=30):
+    """One request to a peer, as us."""
+    where = peers().get(peer) or {}
+    if not where.get("url"):
+        raise LookupError("no such machine")
+    request = urllib.request.Request(where["url"] + path, data=body, method=method)
+    request.add_header("Authorization", "Bearer " + (where.get("token") or ""))
+    if body is not None:
+        request.add_header("Content-Type", "application/json")
+    return urllib.request.urlopen(request, timeout=timeout)
+
+
+def peer_prefix(peer):
+    """What a peer calls its sessions. Asked once; it does not change."""
+    def produce():
+        try:
+            with peer_call(peer, "/api/state", timeout=10) as answer:
+                return (json.load(answer).get("prefix") or "").strip()
+        except Exception:                          # noqa: BLE001
+            return ""
+    return cached("prefix:" + peer, 300.0, produce)
+
+
+def owner(name):
+    """Which machine a session belongs to, read off its name.
+
+    Every machine prefixes its sessions with its own name, so the name is
+    already the routing information — no table to keep in step, and no way for
+    two machines to disagree about who owns what.
+    """
+    if not name:
+        return None
+    for peer in peers():
+        mark = peer_prefix(peer)
+        if mark and (name == mark or name.startswith(mark + "-")):
+            return peer
+    return None
+
+
+def peer_sessions(peer):
+    try:
+        with peer_call(peer, "/api/state", timeout=12) as answer:
+            rows = json.load(answer).get("sessions") or []
+    except Exception:                              # noqa: BLE001
+        return []
+    for row in rows:
+        row["machine"] = peer
+    return rows
+
+
 def as_markdown(turns, title):
     """A conversation as something to read somewhere else.
 
@@ -669,12 +742,20 @@ def state():
     # slot, not a conversation. Two minutes of memory keeps it off the path of
     # a poll that runs every few seconds.
     past = cached("past", 120, past_conversations)
+    here = CFG.get("CCS_PREFIX", "")
+    # This machine's sessions and every peer's, in one list. Each row says which
+    # machine it is on; nothing else has to be told, because a session's name
+    # already carries the machine that owns it.
+    rows = [dict(describe(name), machine=here) for name in ccs_sessions()]
+    for peer in peers():
+        rows += peer_sessions(peer)
     return {
         "past": len(past),
-        "prefix": CFG.get("CCS_PREFIX", ""),
+        "machines": [here] + list(peers()),
+        "prefix": here,
         "app": app_name(),
         "workdir": WORKDIR,
-        "sessions": [describe(n) for n in ccs_sessions()],
+        "sessions": rows,
         "profiles": model_tree(),
     }
 
@@ -933,6 +1014,50 @@ class Handler(BaseHTTPRequestHandler):
             query.setdefault(unquote_plus(key), []).append(unquote_plus(value))
         return path, query
 
+    def elsewhere(self, path, query, data=None):
+        """Hand this request to the machine it belongs to, verbatim.
+
+        The same path, the same query, the same body — only the address and the
+        token change. A stream is passed through line by line, because that is
+        how server-sent events arrive and buffering them would defeat the point
+        of having them.
+        """
+        peer = data.get("machine") if isinstance(data, dict) else None
+        peer = peer or owner((data or {}).get("session") if isinstance(data, dict)
+                             else (query.get("session") or [""])[0])
+        if not peer:
+            return False
+        body = json.dumps(data).encode() if data is not None else None
+        target = path + ("?" + urllib.parse.urlencode(query, doseq=True)
+                         if query else "")
+        try:
+            answer = peer_call(peer, target, "POST" if data is not None else "GET",
+                               body, timeout=None if path == "/api/events" else 60)
+        except urllib.error.HTTPError as bad:
+            self.reply(bad.code, bad.read(), bad.headers.get("Content-Type",
+                                                             "application/json"))
+            return True
+        except Exception as bad:                   # noqa: BLE001
+            self.reply(502, {"error": "machine unreachable: {}".format(bad)[:120]})
+            return True
+
+        ctype = answer.headers.get("Content-Type", "application/json")
+        if path == "/api/events":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            try:
+                for line in answer:
+                    self.wfile.write(line)
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            return True
+        self.reply(answer.status, answer.read(), ctype)
+        return True
+
     def reply(self, status, payload, ctype="application/json"):
         body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
         self.send_response(status)
@@ -976,6 +1101,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.static(path)
         if not authorised(self, query):
             return self.reply(401, {"error": "token"})
+        if path != "/api/state" and self.elsewhere(path, query):
+            return None
         if path == "/api/state":
             return self.reply(200, state())
         if path == "/api/history":
@@ -1066,6 +1193,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/upload":
             return self.upload(query)
         data = self.body()
+        if self.elsewhere(path, query, data):
+            return None
         if path == "/api/message":
             return self.message(data)
         if path == "/api/profile":

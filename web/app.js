@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v51';
+const BUILD = 'v52';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -240,6 +240,16 @@ function paintModel() {
   chip.innerHTML = '<span class="mname">' + esc(label) + '</span>';
 }
 
+// Which machine you are talking to, when there is more than one to talk to.
+function paintMachine() {
+  const row = (known.sessions || []).find((s) => s.name === session) || {};
+  const tag = $('machine');
+  if (!tag) return;
+  const many = (known.machines || []).length > 1;
+  tag.textContent = many && row.machine ? row.machine : '';
+  tag.hidden = !tag.textContent;
+}
+
 function setStatus(ready, profile) {
   // Nothing is being held while an archived conversation is on screen, so the
   // poll that keeps the live status fresh must not paint over what it says.
@@ -345,6 +355,7 @@ async function openSession(name) {
   $('stream').innerHTML = '';
   $('name').textContent = shortName(name);
   setStatus(null, null);
+  paintMachine();
   paintModel();
   const data = await api('/api/history?session=' + encodeURIComponent(name));
   offset = data.offset;
@@ -550,6 +561,30 @@ let reading = null;
 // Which tool servers a session gets. Two registries, because the two backends
 // keep their own: Claude Code's and Antigravity's. Both are read here and both
 // are switched here, so it does not matter which one you are on.
+// More than one machine can be reached from here, so a new session has to be
+// started somewhere. With one machine there is nothing to ask.
+async function newSession() {
+  const machines = known.machines || [];
+  if (machines.length < 2) {
+    const r = await post('/api/session', { action: 'new' });
+    if (r.session) openSession(r.session);
+    return;
+  }
+  sheet('➕ Yeni oturum', (box) => {
+    const list = group(box);
+    machines.forEach((machine) => {
+      const live = (known.sessions || []).filter((s) => s.machine === machine).length;
+      button(list, machine, live + ' oturum çalışıyor', async () => {
+        closeSheet();
+        note('Oturum açılıyor…');
+        const r = await post('/api/session', { action: 'new', machine });
+        if (r.session) openSession(r.session);
+        else note('Oturum açılamadı.');
+      });
+    });
+  });
+}
+
 async function mcpSheet() {
   let data;
   try {
@@ -736,7 +771,10 @@ function chatRow(list, s, isPinned) {
           '<span class="cwhen">' + esc(whenish(s.at)) + '</span>' +
         '</span>' +
         '<span class="cprev">' + esc(s.last || 'Henüz konuşmadı') + '</span>' +
-        '<span class="ctag">' + esc(s.profile === '-' ? 'Claude' : s.profile) +
+        '<span class="ctag">' +
+          (s.machine && known.machines && known.machines.length > 1
+            ? esc(s.machine) + ' · ' : '') +
+          esc(s.profile === '-' ? 'Claude' : s.profile) +
           (s.ready ? '' : ' · çalışıyor') + '</span>' +
       '</span>' + (s.name === session ? '<span class="ctick">✓</span>' : '');
     const pin = document.createElement('span');
@@ -780,10 +818,7 @@ function menuSheet() {
   add('🗂 Oturumlar', () => sessionSheet());
   add('⚡ Görevler', () => tasksSheet());
   add('📁 Dosyalar', () => filesSheet(''));
-  add('➕ Yeni oturum', async () => {
-    const r = await post('/api/session', { action: 'new' });
-    if (r.session) openSession(r.session);
-  });
+  add('➕ Yeni oturum', () => newSession());
   add('✏️ Yeniden adlandır', () => renameSheet());
   const put = (known.sessions.find((s) => s.name === session) || {}).archived;
   add(put ? '🗄 Arşivden çıkar' : '🗄 Arşivle', async () => {
@@ -1652,6 +1687,7 @@ async function boot() {
     return;                       // gate() already ran on 401
   }
   paintModel();
+  paintMachine();
   keepPush();
   document.title = known.app || document.title;
   const brand = $('brand');
