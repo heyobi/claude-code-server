@@ -5,6 +5,12 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+# A session is a tmux server, and the first one is forked by whatever asked for
+# it — which is this. Under the default KillMode systemd then takes the whole
+# cgroup down with the unit, so restarting the API killed every conversation it
+# had ever started. It did not show on the machine this was written on, because
+# there the tmux server predated the service and lived in another cgroup.
+KillMode=process
 Type=simple
 ExecStart=%h/.local/share/claude-code-server/bin/ccs-api
 Restart=always
