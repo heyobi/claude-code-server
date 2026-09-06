@@ -967,6 +967,22 @@ that, so the cache is dropped after anything that changes it; and searching the
 archive parses the transcripts rather than grepping them, because grep finds
 the phrase inside the JSON around it and reports plumbing.
 
+### Turning tools on from the phone
+
+The menu lists both registries — Claude Code's and Antigravity's, because the
+two backends keep their own — and switches either. What can be switched on is a
+catalogue in the code, not a text field: adding an MCP server is handing
+something the run of this machine, and choosing from a list somebody wrote
+beforehand is a different act from typing a command into a phone.
+
+Neither CLI has a machine-readable listing, so the human one is parsed. Claude
+Code has no notion of a disabled server either, so off means removed and on
+means added again from the catalogue; Antigravity keeps its own enabled flag
+and that is used. Servers are loaded when a session starts, so the sheet offers
+to relaunch — with the profile the session is already on, and no model, because
+sending one would write a pool-wide setting as a side effect of restarting one
+chat.
+
 ## Security
 
 ### A file the workspace holds is not a file we trust

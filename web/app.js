@@ -7,7 +7,7 @@
 
 // Shown in the menu. When the phone is running something other than what the
 // server has, that is worth being able to see rather than deduce.
-const BUILD = 'v50';
+const BUILD = 'v51';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -547,6 +547,77 @@ let reading = null;
 // there — and it goes as a file rather than a wall of text so it arrives as a
 // document. Markdown because it opens in anything, and because the code blocks
 // the answers are full of survive being pasted.
+// Which tool servers a session gets. Two registries, because the two backends
+// keep their own: Claude Code's and Antigravity's. Both are read here and both
+// are switched here, so it does not matter which one you are on.
+async function mcpSheet() {
+  let data;
+  try {
+    data = await api('/api/mcp');
+  } catch (e) {
+    note('MCP listesi alınamadı.');
+    return;
+  }
+  const catalogue = data.known || [];
+  sheet('🔌 MCP', (box) => {
+    const note0 = document.createElement('p');
+    note0.className = 'note';
+    note0.textContent = 'Araçlar oturum açılırken yükleniyor — değişiklik, ' +
+                        'oturum yeniden başlayınca geçerli olur.';
+    box.appendChild(note0);
+
+    [['agy', 'Antigravity'], ['claude', 'Claude Code']].forEach(([key, title]) => {
+      label(box, title);
+      const rows = data[key] || [];
+      const list = group(box);
+      const seen = new Set();
+      rows.forEach((row) => {
+        seen.add(row.name);
+        const what = catalogue.find((k) => k.name === row.name);
+        const line = button(list, (row.enabled ? '🟢 ' : '⚪️ ') + row.name,
+          (what ? what.what : row.target).slice(0, 70), async () => {
+            await mcpSet(key, row.enabled ? 'off' : 'on', row.name);
+          }, row.enabled);
+      });
+      // What we ship and this backend does not have yet.
+      catalogue.filter((k) => !seen.has(k.name)).forEach((k) => {
+        button(list, '⚪️ ' + k.name, k.what, async () => {
+          await mcpSet(key, 'on', k.name);
+        });
+      });
+      if (data[key + '_error']) {
+        const bad = document.createElement('p');
+        bad.className = 'note';
+        bad.textContent = data[key + '_error'];
+        box.appendChild(bad);
+      }
+    });
+
+    button(box, '♻️ Bu oturumu yeniden başlat', 'Değişikliği şimdi uygula',
+      async () => {
+        closeSheet();
+        note('Oturum yeniden başlıyor…');
+        setBusy(true);
+        // The same profile it is already on: that relaunches it and resumes
+        // the conversation, which is all a tool change needs. No model is sent,
+        // because that would write a pool-wide setting as a side effect of
+        // restarting one session.
+        const row = known.sessions.find((s) => s.name === session) || {};
+        await post('/api/profile', { session, profile: row.profile || '-' });
+      });
+  });
+}
+
+async function mcpSet(backend, action, name) {
+  tap();
+  try {
+    await post('/api/mcp', { backend, action, name });
+  } catch (e) {
+    note('Değiştirilemedi.');
+  }
+  mcpSheet();
+}
+
 async function shareChat(what) {
   const query = what.uuid
     ? '/api/export?uuid=' + encodeURIComponent(what.uuid)
@@ -731,6 +802,7 @@ function menuSheet() {
   // The gap under the composer has been reported from a phone three times and
   // never reproduced anywhere else. This is how the phone gets to say what it
   // actually measures instead of us guessing at it.
+  add('🔌 MCP', () => mcpSheet(), 'Araçlar: hangisi açık');
   add('📤 Paylaş', () => shareChat({ session: session }),
       'Konuşmayı bir dosya olarak ver');
   add('📐 Yerleşim', () => {}, measurements());

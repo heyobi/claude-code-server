@@ -35,7 +35,8 @@ from ccs_common import (                      # noqa: E402  (path set above)
     next_auto_name,
     last_model, last_words, pane_lines, pane_progress, pane_ready,
     send_to_session,
-    blocks_written, relaunching, session_profile, wait_relaunch, wait_ready,
+    blocks_written, relaunching, run, session_profile, wait_relaunch,
+    wait_ready,
     session_uuid, tmux, transcript_of,
     turns_from,
 )
@@ -451,6 +452,99 @@ def local_stamp(ts, shape):
     except (ValueError, TypeError):
         return ""
     return when.replace(tzinfo=datetime.timezone.utc).astimezone().strftime(shape)
+
+
+# ------------------------------------------------------------------------- mcp
+
+# Where the two CLIs live. Neither is on a service's PATH by default.
+CLAUDE_BIN = os.path.join(HOME, ".npm-global", "bin", "claude")
+AGY_BIN = os.path.join(HOME, ".local", "bin", "agy")
+
+# What we know how to offer. A catalogue rather than a free-text command box:
+# adding an MCP server is handing something the run of this machine, and a list
+# somebody chose beforehand is a different act from a text field on a phone.
+MCP_KNOWN = [
+    {
+        "name": "ziverbey",
+        "command": os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                                "ccs-mcp"),
+        "what": "Bu makinenin oturumları: sor, aç, kapat, arşivde ara",
+    },
+]
+
+
+def mcp_claude():
+    """Claude Code's servers, read off its own listing.
+
+    It has no machine-readable mode, so the human one is parsed: a name, a
+    colon, where it points, and a health verdict after a dash. The health check
+    is a network round trip per server, which is why the answer is cached.
+    """
+    rows = []
+    text = run([CLAUDE_BIN, "mcp", "list"], timeout=45)
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("Checking") or ":" not in line:
+            continue
+        name, _, rest = line.partition(":")
+        target, _, health = rest.partition(" - ")
+        rows.append({"name": name.strip(), "target": target.strip(),
+                     "note": health.strip(), "enabled": True})
+    return rows
+
+
+def mcp_agy():
+    """Antigravity's servers. Columns, and it carries an enabled flag of its own."""
+    rows = []
+    text = run([AGY_BIN, "mcp", "list"], timeout=30)
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 4 or parts[0] in ("NAME", "No"):
+            continue
+        rows.append({"name": parts[0], "target": " ".join(parts[3:]),
+                     "note": parts[1], "enabled": parts[2].lower() == "enabled"})
+    return rows
+
+
+def mcp_state():
+    def produce():
+        out = {"known": MCP_KNOWN}
+        for backend, reader in (("claude", mcp_claude), ("agy", mcp_agy)):
+            try:
+                out[backend] = reader()
+            except Exception as bad:              # noqa: BLE001
+                out[backend] = []
+                out[backend + "_error"] = str(bad)[:120]
+        return out
+    return cached("mcp", 15.0, produce)
+
+
+def mcp_change(backend, action, name):
+    """Turn one on or off.
+
+    Antigravity keeps a disabled server in its list; Claude Code does not have
+    the idea, so off means removed and on means added again from the catalogue.
+    Nothing here takes a command from the caller.
+    """
+    known = {row["name"]: row for row in MCP_KNOWN}
+    if backend == "agy":
+        if action == "on":
+            if name in known and name not in [r["name"] for r in mcp_agy()]:
+                run([AGY_BIN, "mcp", "add", name, known[name]["command"]], timeout=30)
+            else:
+                run([AGY_BIN, "mcp", "enable", name], timeout=30)
+        else:
+            run([AGY_BIN, "mcp", "disable", name], timeout=30)
+    else:
+        if action == "on":
+            if name not in known:
+                return False
+            run([CLAUDE_BIN, "mcp", "add", name, "--", known[name]["command"]],
+                timeout=45)
+        else:
+            run([CLAUDE_BIN, "mcp", "remove", name], timeout=45)
+    _CACHE.pop("mcp", None)
+    return True
 
 
 def as_markdown(turns, title):
@@ -934,6 +1028,8 @@ class Handler(BaseHTTPRequestHandler):
                 "here": os.path.dirname(os.path.realpath(full))
                         == os.path.realpath(PROJDIR),
             })
+        if path == "/api/mcp":
+            return self.reply(200, mcp_state())
         if path == "/api/past":
             return self.reply(200, {"entries": cached("past", 120,
                                                       past_conversations)})
@@ -978,6 +1074,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.session(data)
         if path == "/api/permission":
             return self.permission(data)
+        if path == "/api/mcp":
+            backend = data.get("backend") or ""
+            action = data.get("action") or ""
+            name = (data.get("name") or "").strip()
+            if backend not in ("claude", "agy") or action not in ("on", "off") \
+                    or not name.replace("-", "").replace("_", "").isalnum():
+                return self.reply(400, {"error": "bad request"})
+            ok = mcp_change(backend, action, name)
+            return self.reply(200 if ok else 400,
+                              {"ok": ok, "mcp": mcp_state()})
         if path == "/api/push/subscribe":
             if not ccs_push.available():
                 return self.reply(503, {"error": "cryptography not installed"})
