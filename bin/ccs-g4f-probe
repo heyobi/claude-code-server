@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Find out which g4f providers actually answer today.
+
+    ccs-g4f-probe            test them all and record the ones that work
+    ccs-g4f-probe --show     print what was recorded last time
+
+g4f ships around a hundred providers and marks a good half of them working
+without a key. Most of those are not: they want a browser, a key, a card, or
+they simply hang. The only way to know is to ask each one a question and see
+what comes back, so that is what this does — every provider in its own process
+with its own deadline, because several of them never return.
+
+The result is written where the bridge reads it, which is how the model picker
+in the app comes to list providers that were alive this morning rather than a
+list somebody typed once.
+"""
+
+import concurrent.futures
+import json
+import os
+import subprocess
+import sys
+import warnings
+
+warnings.filterwarnings("ignore")
+
+HOME = os.path.expanduser("~")
+VENV = os.path.join(HOME, "venvs", "g4f", "bin", "python")
+STORE = os.path.join(HOME, ".config", "claude-code-server", "g4f-providers.json")
+DEADLINE = 25                      # seconds a provider gets before it is dropped
+ASK = "Reply with exactly one word: hello"
+
+ONE = """
+import warnings, sys; warnings.filterwarnings("ignore")
+from g4f.client import Client
+import g4f.Provider as P
+p = getattr(P, sys.argv[1], None)
+if p is None:
+    sys.exit("missing")
+r = Client().chat.completions.create(
+    model="", provider=p, messages=[{"role": "user", "content": %r}])
+print((r.choices[0].message.content or "").strip()[:80])
+""" % ASK
+
+
+def candidates():
+    out = subprocess.run(
+        [VENV, "-c", "import warnings;warnings.filterwarnings('ignore')\n"
+                     "import g4f.Provider as P\n"
+                     "print(' '.join(n for n in dir(P) if not n.startswith('_')\n"
+                     "  and getattr(getattr(P,n),'working',False)\n"
+                     "  and not getattr(getattr(P,n),'needs_auth',False)))"],
+        capture_output=True, text=True, timeout=60)
+    return out.stdout.split()
+
+
+# Returning something is not the same as answering. Asked for one word, a
+# provider that hands back a page of search results or "sign up and repeat your
+# request" is not a backend, it is a billboard — and putting it in the picker
+# would mean finding out mid-conversation.
+REFUSALS = ("sign up", "subscribe", "log in", "sign in", "upgrade", "###",
+            "captcha", "rate limit", "quota")
+
+
+def answered(said):
+    low = said.lower()
+    if len(said) > 60 or said.count("\n") > 1:
+        return False
+    return not any(mark in low for mark in REFUSALS)
+
+
+def probe(name):
+    try:
+        out = subprocess.run([VENV, "-c", ONE, name], capture_output=True,
+                             text=True, timeout=DEADLINE)
+    except subprocess.TimeoutExpired:
+        return name, None, "no answer in {}s".format(DEADLINE)
+    said = (out.stdout or "").strip()
+    if out.returncode == 0 and said and answered(said):
+        return name, said, ""
+    if out.returncode == 0 and said:
+        return name, None, "not an answer: " + said[:60].replace("\n", " ")
+    trouble = (out.stderr or "").strip().splitlines()
+    return name, None, (trouble[-1] if trouble else "no output")[:90]
+
+
+def main():
+    if "--show" in sys.argv:
+        try:
+            with open(STORE, encoding="utf-8") as handle:
+                print(json.dumps(json.load(handle), indent=1, ensure_ascii=False))
+        except OSError:
+            print("nothing recorded yet; run ccs-g4f-probe")
+        return
+
+    if not os.path.exists(VENV):
+        sys.exit("g4f is not installed at " + VENV)
+    names = candidates()
+    print("testing {} providers, {}s each\n".format(len(names), DEADLINE))
+    good = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        for name, said, why in pool.map(probe, names):
+            if said:
+                good.append(name)
+                print("  %-24s OK    %s" % (name, said[:44].replace("\n", " ")))
+            else:
+                print("  %-24s --    %s" % (name, why))
+
+    os.makedirs(os.path.dirname(STORE), exist_ok=True)
+    with open(STORE, "w", encoding="utf-8") as handle:
+        json.dump({"providers": sorted(good)}, handle, indent=1)
+    print("\n{} of {} answered. Written to {}".format(len(good), len(names), STORE))
+    print("Restart the bridge to pick them up: systemctl --user restart ccs-g4f-bridge")
+
+
+if __name__ == "__main__":
+    main()

@@ -32,6 +32,22 @@ PORT = int(os.environ.get("CCS_G4F_PORT", "4002"))
 PROVIDER = os.environ.get("CCS_G4F_PROVIDER", "LLM7")
 MODEL = os.environ.get("CCS_G4F_MODEL", "")
 LOGFILE = os.path.join(HOME, ".claude", "claude-code-server", "g4f-bridge.log")
+STORE = os.path.join(HOME, ".config", "claude-code-server", "g4f-providers.json")
+
+
+def offered():
+    """Providers the picker should show: the ones that answered when last asked.
+
+    A hardcoded list would be wrong within the week — these come and go. The
+    probe writes what it found; if it has never run, the default is all there
+    is to offer.
+    """
+    try:
+        with open(STORE, encoding="utf-8") as handle:
+            found = json.load(handle).get("providers") or []
+    except (OSError, ValueError):
+        found = []
+    return found or [PROVIDER]
 
 sys.path.insert(0, os.path.join(HOME, "venvs", "g4f", "lib",
                                 "python{}.{}".format(*sys.version_info[:2]),
@@ -125,6 +141,17 @@ class Bridge(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_GET(self):
+        # The app asks a gateway what it serves before drawing the picker, and
+        # a gateway that does not answer shows up as no models at all.
+        if self.path.rstrip("/").endswith("/v1/models"):
+            return self.send_json(200, {
+                "object": "list",
+                "data": [{"id": name, "object": "model", "owned_by": "g4f"}
+                         for name in offered()]})
+        return self.send_json(404, {"type": "error",
+                                    "error": {"type": "not_found"}})
+
     def do_POST(self):
         if not self.path.startswith("/v1/messages"):
             return self.send_json(404, {"type": "error",
@@ -147,10 +174,18 @@ class Bridge(BaseHTTPRequestHandler):
             return self.stream_reply(payload, said)
         return self.whole_reply(payload, said)
 
-    def answer(self, said, stream):
-        provider = getattr(Providers, PROVIDER, None)
+    def answer(self, said, stream, wanted=""):
+        """Whichever provider was asked for, or the default.
+
+        There is no single "g4f model": what you are choosing is which
+        provider's endpoint answers, so the model name in the request is taken
+        as the provider name. That is what makes the picker useful — the list
+        is the providers that were alive when the probe last ran.
+        """
+        name = wanted if wanted and wanted != "g4f" else PROVIDER
+        provider = getattr(Providers, name, None)
         if provider is None:
-            raise LookupError("no g4f provider called " + PROVIDER)
+            raise LookupError("no g4f provider called " + name)
         return Client().chat.completions.create(
             model=MODEL, provider=provider, messages=said, stream=stream)
 
@@ -163,7 +198,7 @@ class Bridge(BaseHTTPRequestHandler):
 
     def whole_reply(self, payload, said):
         try:
-            result = self.answer(said, False)
+            result = self.answer(said, False, payload.get("model") or "")
             text = result.choices[0].message.content or ""
         except Exception as bad:                   # noqa: BLE001
             note("failed: {}".format(bad))
@@ -201,7 +236,8 @@ class Bridge(BaseHTTPRequestHandler):
                 "content_block": {"type": "text", "text": ""}})
             written = 0
             try:
-                for chunk in self.answer(said, True):
+                for chunk in self.answer(said, True,
+                                         payload.get("model") or ""):
                     piece = ""
                     try:
                         piece = chunk.choices[0].delta.content or ""
