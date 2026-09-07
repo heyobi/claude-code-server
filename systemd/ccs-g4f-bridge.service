@@ -1,0 +1,19 @@
+[Unit]
+Description=Anthropic Messages API in front of g4f
+Documentation=https://github.com/heyobi/claude-code-server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Run by the venv's own interpreter: g4f pulls a large dependency tree and it
+# has no business in the system python, which Ubuntu marks externally managed
+# anyway.
+ExecStart=%h/venvs/g4f/bin/python %h/.local/share/claude-code-server/bin/ccs-g4f-bridge
+Restart=always
+RestartSec=10
+StandardOutput=append:%h/.claude/claude-code-server/g4f-bridge.log
+StandardError=append:%h/.claude/claude-code-server/g4f-bridge.log
+
+[Install]
+WantedBy=default.target

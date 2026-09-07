@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
-"""Drive this machine's sessions as tools rather than as shell commands.
+"""Drive this machine's sessions — and any machine it reaches — as tools.
 
     claude mcp add ziverbey -- ~/.local/share/claude-code-server/bin/ccs-mcp
+    agy mcp add ziverbey ~/.local/share/claude-code-server/bin/ccs-mcp
 
 Everything here is reachable from a shell already, which is why this was not
-written first. It earns its place in one case: work that is driven rather than
-typed. A scheduled job that asks a question on a backend and files the answer
-does not want to compose a command line, parse a pane and guess when the answer
-is finished — it wants to call `ask` and be given the text.
+written first. It earns its place for work that is driven rather than typed: a
+scheduled job that asks a question on a backend and files the answer does not
+want to compose a command line, read a terminal pane and guess when the answer
+is finished. It wants to call `ask` and be handed the text.
+
+It talks to the local API rather than to tmux, which is the whole reason it can
+reach the second machine: the API already knows how to forward, so every tool
+here works on either machine without knowing that machines exist. Anything the
+phone can do, a job can do.
 
 Speaks MCP over stdio: newline-delimited JSON-RPC on stdin and stdout. Nothing
 but protocol goes to stdout; anything worth saying goes to stderr.
@@ -15,18 +21,16 @@ but protocol goes to stdout; anything worth saying goes to stderr.
 
 import json
 import os
+import subprocess
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from ccs_common import (                      # noqa: E402  (path set above)
-    PROJDIR, _CACHE, ccs, ccs_sessions, last_words, pane_ready, relaunching,
-    send_to_session, session_profile, session_uuid, transcript_of, turns_from,
-    wait_ready,
-)
-
+HERE = os.path.dirname(os.path.realpath(__file__))
 VERSION = "2025-06-18"
-ANSWER_WAIT = 300.0          # seconds to wait for a reply before giving up
+ANSWER_WAIT = 600.0          # seconds to wait for a reply before giving up
 
 
 def say(line):
@@ -34,62 +38,121 @@ def say(line):
     sys.stderr.flush()
 
 
+def setting(key, fallback):
+    path = os.path.expanduser("~/.config/claude-code-server/config")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip().startswith(key + "="):
+                    return line.split("=", 1)[1].strip().strip("'\"")
+    except OSError:
+        pass
+    return fallback
+
+
+BASE = "http://127.0.0.1:" + setting("CCS_API_PORT", "8787")
+
+
+def token():
+    for attempt in ([os.path.join(HERE, "ccs-api")],
+                    [sys.executable, os.path.join(HERE, "ccs-api")]):
+        try:
+            out = subprocess.run(attempt + ["--print-token"],
+                                 capture_output=True, text=True, timeout=20)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if out.stdout.strip():
+            return out.stdout.strip()
+    return ""
+
+
+TOKEN = token()
+
+
+def call(path, body=None, timeout=90):
+    data = json.dumps(body).encode() if body is not None else None
+    request = urllib.request.Request(BASE + path, data=data,
+                                     method="POST" if data else "GET")
+    request.add_header("Authorization", "Bearer " + TOKEN)
+    if data:
+        request.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(request, timeout=timeout) as answer:
+        raw = answer.read()
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return {"text": raw.decode("utf-8", "ignore")}
+
+
+def quote(**kwargs):
+    return "?" + urllib.parse.urlencode({k: v for k, v in kwargs.items() if v})
+
+
 # ------------------------------------------------------------------- tools
 
 
 def tool_sessions(_):
-    rows = []
-    for name in ccs_sessions():
-        path = transcript_of(name)
-        said, at = last_words(path) if path else ("", 0)
-        rows.append({
-            "session": name,
-            "profile": session_profile(name),
-            "ready": pane_ready(name) and not relaunching(name),
-            "last": said[:160],
-            "at": at,
-        })
-    return rows
+    state = call("/api/state")
+    return {
+        "machines": state.get("machines", []),
+        "sessions": [{
+            "session": row["name"],
+            "machine": row.get("machine"),
+            "backend": row.get("profile"),
+            "model": row.get("model"),
+            "free": row.get("ready"),
+            "last": (row.get("last") or "")[:160],
+        } for row in state.get("sessions", [])],
+    }
 
 
 def tool_new(args):
     topic = (args.get("topic") or "").strip()
-    if not topic:
-        return {"error": "topic is required"}
-    before = set(ccs_sessions())
-    ccs("ccs-new", *topic.split())
-    # The session list is remembered for a couple of seconds, and starting one
-    # takes less than that: without this the new session is invisible to the
-    # call that just made it.
-    _CACHE.pop("sessions", None)
-    fresh = [n for n in ccs_sessions() if n not in before]
-    if not fresh:
+    machine = (args.get("machine") or "").strip()
+    body = {"action": "new"}
+    if machine:
+        body["machine"] = machine
+    made = call("/api/session", body, timeout=180)
+    name = made.get("session")
+    if not name:
         return {"error": "no session appeared"}
-    wait_ready(fresh[0], 60.0)
-    return {"session": fresh[0]}
+    if topic:
+        renamed = call("/api/session", {"action": "rename", "session": name,
+                                        "name": topic}, timeout=60)
+        name = renamed.get("session") or name
+    return {"session": name}
 
 
 def tool_close(args):
-    name = args.get("session") or ""
-    if name not in ccs_sessions():
-        return {"error": "no such session"}
-    ccs("ccs-close", name)
-    _CACHE.pop("sessions", None)
-    return {"closed": name}
+    return call("/api/session", {"action": "close",
+                                 "session": args.get("session") or ""})
 
 
 def tool_profile(args):
-    name = args.get("session") or ""
-    wanted = args.get("profile") or "-"
-    if name not in ccs_sessions():
-        return {"error": "no such session"}
-    ccs("ccs-profile", wanted, name)
-    _CACHE.pop("sessions", None)
-    # The switch kills the session and starts it again; a caller that asked for
-    # a backend means to use it, so hand back something that is ready to use.
-    time.sleep(6)
-    ok = wait_ready(name, 60.0)
-    return {"session": name, "profile": wanted, "ready": ok}
+    out = call("/api/profile", {"session": args.get("session") or "",
+                                "profile": args.get("profile") or "-"},
+               timeout=120)
+    # The switch kills the session and starts it again. A caller that asked for
+    # a backend means to use it, so wait until there is something to use.
+    time.sleep(8)
+    wait_free(args.get("session") or "", 90)
+    return out
+
+
+def free_now(name):
+    for row in call("/api/state").get("sessions", []):
+        if row["name"] == name:
+            return bool(row.get("ready"))
+    return False
+
+
+def wait_free(name, limit):
+    began = time.time()
+    while time.time() - began < limit:
+        if free_now(name):
+            return True
+        time.sleep(2)
+    return False
 
 
 def tool_ask(args):
@@ -97,70 +160,93 @@ def tool_ask(args):
     name = args.get("session") or ""
     text = (args.get("text") or "").strip()
     limit = float(args.get("wait") or ANSWER_WAIT)
-    if name not in ccs_sessions():
-        return {"error": "no such session"}
-    if not text:
-        return {"error": "text is required"}
-    path = transcript_of(name)
-    if not path:
-        return {"error": "session has no transcript yet"}
-    offset = os.path.getsize(path)
+    if not name or not text:
+        return {"error": "session and text are both required"}
 
-    if relaunching(name) or not pane_ready(name):
-        if not wait_ready(name, 60.0):
-            return {"error": "session did not become ready"}
-    send_to_session(name, text)
+    before = call("/api/history" + quote(session=name))
+    if "turns" not in before:
+        return {"error": before.get("error", "no such session")}
+    seen = {t.get("id") for t in before["turns"]}
+
+    if not free_now(name) and not wait_free(name, 90):
+        return {"error": "session did not become free"}
+    sent = call("/api/message", {"session": name, "text": text}, timeout=180)
+    if sent.get("error"):
+        return sent
 
     began = time.time()
     said = []
-    seen_work = False
     while time.time() - began < limit:
-        time.sleep(1.0)
-        turns, offset = turns_from(path, offset)
-        for turn in turns:
-            if turn["role"] == "assistant" and turn.get("text"):
-                said.append(turn["text"])
-            if turn["role"] in ("assistant", "tool"):
-                seen_work = True
-        # Finished means the pane came back and something was actually said.
-        if said and seen_work and pane_ready(name):
+        time.sleep(2)
+        now = call("/api/history" + quote(session=name))
+        fresh = [t for t in now.get("turns", []) if t.get("id") not in seen]
+        said = [t["text"] for t in fresh
+                if t["role"] == "assistant" and t.get("text")]
+        if said and free_now(name):
             return {"session": name, "answer": "\n\n".join(said),
                     "seconds": round(time.time() - began, 1)}
     return {"error": "timed out", "partial": "\n\n".join(said)}
 
 
 def tool_conversation(args):
-    """A conversation as turns, live or closed, by session name or by id."""
-    name = args.get("session") or ""
-    uuid = args.get("uuid") or ""
-    if name:
-        path = transcript_of(name)
-    elif uuid and uuid.replace("-", "").isalnum():
-        path = os.path.join(PROJDIR, uuid + ".jsonl")
-        if not os.path.isfile(path):
-            path = None
-            for folder in os.listdir(os.path.dirname(PROJDIR)):
-                guess = os.path.join(os.path.dirname(PROJDIR), folder, uuid + ".jsonl")
-                if os.path.isfile(guess):
-                    path = guess
-                    break
+    limit = int(args.get("limit") or 60)
+    if args.get("session"):
+        got = call("/api/history" + quote(session=args["session"]))
+    elif args.get("uuid"):
+        got = call("/api/past/turns" + quote(uuid=args["uuid"]))
     else:
         return {"error": "session or uuid is required"}
-    if not path or not os.path.isfile(path):
-        return {"error": "no such conversation"}
-    turns, _ = turns_from(path, 0)
-    keep = [t for t in turns if t["role"] in ("user", "assistant") and t.get("text")]
-    return {"turns": keep[-int(args.get("limit") or 60):]}
+    keep = [{"who": t["role"], "when": (t.get("ts") or "")[:16], "said": t["text"]}
+            for t in got.get("turns", [])
+            if t["role"] in ("user", "assistant") and t.get("text")]
+    return {"turns": keep[-limit:]}
+
+
+def tool_archive(args):
+    """Conversations that are closed but still on the disk."""
+    rows = call("/api/past").get("entries", [])
+    needle = (args.get("about") or "").strip().lower()
+    if needle:
+        rows = [r for r in rows if needle in (r.get("topic") or "").lower()]
+    return {"conversations": [{
+        "uuid": r["uuid"], "topic": r["topic"], "folder": r.get("dir"),
+        "resumable": r.get("here"), "when": r.get("at"),
+    } for r in rows[:int(args.get("limit") or 30)]]}
+
+
+def tool_resume(args):
+    """Bring a closed conversation back as a live session."""
+    return call("/api/session", {"action": "resume", "uuid": args.get("uuid") or ""},
+                timeout=180)
+
+
+def tool_files(args):
+    where = quote(session=args["session"]) if args.get("session") \
+        else quote(dir=args.get("dir") or "")
+    got = call("/api/files" + where)
+    return {"files": [{"path": e["path"], "kind": e.get("kind"),
+                       "bytes": e.get("size")} for e in got.get("entries", [])]}
+
+
+def tool_read(args):
+    path = args.get("path") or ""
+    if not path:
+        return {"error": "path is required"}
+    got = call("/api/file" + quote(path=path), timeout=60)
+    text = got.get("text") if isinstance(got, dict) else str(got)
+    return {"path": path, "text": (text or "")[:40000]}
 
 
 def tool_search(args):
-    """Find a phrase across every conversation on the machine.
+    """Find a phrase across every conversation on this machine.
 
     Searching the raw file is quick and useless: what comes back is JSON
     plumbing around the words. The lines are parsed and the match is reported
-    as the sentence somebody actually said, with the conversation it was said
-    in, so the answer is readable without opening anything.
+    as the sentence somebody actually said.
     """
+    sys.path.insert(0, HERE)
+    from ccs_common import PROJDIR                 # noqa: PLC0415
+
     needle = (args.get("text") or "").strip().lower()
     if len(needle) < 3:
         return {"error": "give at least three characters"}
@@ -182,7 +268,7 @@ def tool_search(args):
             except OSError:
                 continue
             if needle not in raw.lower():
-                continue                     # cheap check before the dear one
+                continue                          # cheap check before the dear one
             topic = ""
             for line in raw.splitlines():
                 try:
@@ -198,9 +284,7 @@ def tool_search(args):
                 if where < 0:
                     continue
                 hits.append({
-                    "uuid": entry[:-6],
-                    "topic": topic,
-                    "who": item.get("type"),
+                    "uuid": entry[:-6], "topic": topic, "who": item.get("type"),
                     "when": (item.get("timestamp") or "")[:16].replace("T", " "),
                     "said": " ".join(
                         said[max(0, where - 100):where + 160].split())[:240],
@@ -211,7 +295,6 @@ def tool_search(args):
 
 
 def text_of(item):
-    """What a transcript entry says, as a person would read it."""
     body = (item.get("message") or {}).get("content")
     if isinstance(body, str):
         return body
@@ -221,94 +304,86 @@ def text_of(item):
     return ""
 
 
+def field(kind, what):
+    return {"type": kind, "description": what}
+
+
 TOOLS = [
-    {
-        "name": "sessions",
-        "description": "List the sessions running on this machine, with the "
-                       "backend each one is on and whether it is free.",
-        "inputSchema": {"type": "object", "properties": {}},
-        "run": tool_sessions,
-    },
-    {
-        "name": "ask",
-        "description": "Send a question to a session and wait for the answer. "
-                       "Returns the text, not an acknowledgement. Use a session "
-                       "on the antigravity profile to spend no subscription.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "session": {"type": "string", "description": "session name"},
-                "text": {"type": "string", "description": "what to ask"},
-                "wait": {"type": "number",
-                         "description": "seconds to wait, default 300"},
-            },
-            "required": ["session", "text"],
-        },
-        "run": tool_ask,
-    },
-    {
-        "name": "new_session",
-        "description": "Start a session named after a topic and wait for it to "
-                       "come up. Returns its name.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"topic": {"type": "string"}},
-            "required": ["topic"],
-        },
-        "run": tool_new,
-    },
-    {
-        "name": "set_profile",
-        "description": "Move a session onto a backend: '-' for the Claude "
-                       "login, 'antigravity' for no subscription, 'gemini' for "
-                       "the API gateway. Relaunches it and waits.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "session": {"type": "string"},
-                "profile": {"type": "string"},
-            },
-            "required": ["session", "profile"],
-        },
-        "run": tool_profile,
-    },
-    {
-        "name": "close_session",
-        "description": "End a session for good. The transcript stays and can be "
-                       "resumed later.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"session": {"type": "string"}},
-            "required": ["session"],
-        },
-        "run": tool_close,
-    },
-    {
-        "name": "conversation",
-        "description": "Read a conversation, live or closed, by session name or "
-                       "by transcript id.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "session": {"type": "string"},
-                "uuid": {"type": "string"},
-                "limit": {"type": "number", "description": "last N turns, default 60"},
-            },
-        },
-        "run": tool_conversation,
-    },
-    {
-        "name": "search_archive",
-        "description": "Find a phrase across every conversation on this machine, "
-                       "including ones imported from elsewhere. Returns where it "
-                       "was said, with a little of the surrounding text.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"text": {"type": "string"}},
-            "required": ["text"],
-        },
-        "run": tool_search,
-    },
+    {"name": "sessions", "run": tool_sessions,
+     "description": "Every session on every machine reachable from here, with "
+                    "the backend it runs on and whether it is free.",
+     "inputSchema": {"type": "object", "properties": {}}},
+
+    {"name": "ask", "run": tool_ask,
+     "description": "Send a question to a session and wait for the answer. "
+                    "Returns the text, not an acknowledgement. A session on the "
+                    "antigravity backend answers without spending the Claude "
+                    "subscription.",
+     "inputSchema": {"type": "object", "required": ["session", "text"],
+                     "properties": {
+                         "session": field("string", "session name"),
+                         "text": field("string", "what to ask"),
+                         "wait": field("number", "seconds to wait, default 600")}}},
+
+    {"name": "new_session", "run": tool_new,
+     "description": "Start a session and wait for it to come up. Name the "
+                    "machine to start it elsewhere; leave it out for this one.",
+     "inputSchema": {"type": "object", "properties": {
+         "topic": field("string", "what to call it"),
+         "machine": field("string", "which machine, from the sessions tool")}}},
+
+    {"name": "set_profile", "run": tool_profile,
+     "description": "Move a session onto a backend: '-' for the Claude login, "
+                    "'antigravity' for no subscription, or another configured "
+                    "profile. Relaunches it and waits.",
+     "inputSchema": {"type": "object", "required": ["session", "profile"],
+                     "properties": {"session": field("string", ""),
+                                    "profile": field("string", "")}}},
+
+    {"name": "close_session", "run": tool_close,
+     "description": "End a session. The transcript stays and can be resumed.",
+     "inputSchema": {"type": "object", "required": ["session"],
+                     "properties": {"session": field("string", "")}}},
+
+    {"name": "conversation", "run": tool_conversation,
+     "description": "Read a conversation, live or closed, by session name or by "
+                    "transcript id.",
+     "inputSchema": {"type": "object", "properties": {
+         "session": field("string", ""), "uuid": field("string", ""),
+         "limit": field("number", "last N turns, default 60")}}},
+
+    {"name": "archive", "run": tool_archive,
+     "description": "Closed conversations still on the disk, newest first. "
+                    "Reading one costs nothing; only ones from this workspace "
+                    "can be resumed.",
+     "inputSchema": {"type": "object", "properties": {
+         "about": field("string", "only ones whose topic contains this"),
+         "limit": field("number", "how many, default 30")}}},
+
+    {"name": "resume", "run": tool_resume,
+     "description": "Bring a closed conversation back as a live session, under "
+                    "the id it already had.",
+     "inputSchema": {"type": "object", "required": ["uuid"],
+                     "properties": {"uuid": field("string", "")}}},
+
+    {"name": "files", "run": tool_files,
+     "description": "Files a conversation touched, or a folder in the workspace.",
+     "inputSchema": {"type": "object", "properties": {
+         "session": field("string", "files this session touched"),
+         "dir": field("string", "a folder, relative to the workspace")}}},
+
+    {"name": "read_file", "run": tool_read,
+     "description": "Read a text file from the workspace.",
+     "inputSchema": {"type": "object", "required": ["path"],
+                     "properties": {"path": field("string", "")}}},
+
+    {"name": "search_archive", "run": tool_search,
+     "description": "Find a phrase across every conversation on this machine, "
+                    "including ones imported from elsewhere. Returns where it "
+                    "was said, with the sentence around it.",
+     "inputSchema": {"type": "object", "required": ["text"],
+                     "properties": {"text": field("string", ""),
+                                    "limit": field("number", "default 20")}}},
 ]
 
 BY_NAME = {tool["name"]: tool for tool in TOOLS}
@@ -317,31 +392,27 @@ BY_NAME = {tool["name"]: tool for tool in TOOLS}
 # ---------------------------------------------------------------- protocol
 
 
-def listed():
-    return [{k: v for k, v in tool.items() if k != "run"} for tool in TOOLS]
-
-
 def handle(message):
     method = message.get("method")
-    ident = message.get("id")
     params = message.get("params") or {}
 
     if method == "initialize":
         asked = params.get("protocolVersion")
-        return {
-            "protocolVersion": asked if isinstance(asked, str) else VERSION,
-            "capabilities": {"tools": {}},
-            "serverInfo": {"name": "ziverbey", "version": "1"},
-        }
+        return {"protocolVersion": asked if isinstance(asked, str) else VERSION,
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": setting("CCS_PREFIX", "ziverbey"),
+                               "version": "2"}}
     if method == "tools/list":
-        return {"tools": listed()}
+        return {"tools": [{k: v for k, v in tool.items() if k != "run"}
+                          for tool in TOOLS]}
     if method == "tools/call":
         tool = BY_NAME.get(params.get("name"))
         if not tool:
             raise LookupError("no tool called {}".format(params.get("name")))
         result = tool["run"](params.get("arguments") or {})
-        text = json.dumps(result, ensure_ascii=False, indent=1)
-        return {"content": [{"type": "text", "text": text}],
+        return {"content": [{"type": "text",
+                             "text": json.dumps(result, ensure_ascii=False,
+                                                indent=1)}],
                 "isError": bool(isinstance(result, dict) and result.get("error"))}
     if method == "ping":
         return {}
@@ -349,7 +420,9 @@ def handle(message):
 
 
 def main():
-    say("ccs-mcp ready on stdio")
+    if not TOKEN:
+        say("ccs-mcp: no api token; is ccs-api installed and running?")
+    say("ccs-mcp ready on stdio, talking to " + BASE)
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -358,15 +431,15 @@ def main():
             message = json.loads(line)
         except ValueError:
             continue
-        # A notification has no id and takes no answer.
-        if "id" not in message:
+        if "id" not in message:                    # a notification takes no answer
             continue
         try:
-            answer = {"jsonrpc": "2.0", "id": message["id"], "result": handle(message)}
+            answer = {"jsonrpc": "2.0", "id": message["id"],
+                      "result": handle(message)}
         except LookupError as missing:
             answer = {"jsonrpc": "2.0", "id": message["id"],
                       "error": {"code": -32601, "message": str(missing)}}
-        except Exception as bad:                       # noqa: BLE001
+        except Exception as bad:                   # noqa: BLE001
             say("tool failed: {}".format(bad))
             answer = {"jsonrpc": "2.0", "id": message["id"],
                       "error": {"code": -32603, "message": str(bad)}}
