@@ -81,8 +81,16 @@ ccs_log "profile: $session -> $profile"
 # Claim the name before anything is killed, or the pool fills the gap.
 ccs_reserve "$session"
 
+# The pause is there so a turn in flight can finish reporting before the
+# process under it is killed. A session nobody has spoken to has no turn to
+# finish, and the backend is most often picked exactly then — on a session
+# just created, before the first message. Waiting out a safety margin that
+# protects nothing is most of the delay the app shows as "reconnecting".
+grace=4
+[ -f "$(ccs_projdir)/${uuid}.jsonl" ] || grace=0
+
 nohup setsid bash -c "
-  sleep 4
+  sleep '$grace'
   tmux kill-session -t '$session' 2>/dev/null
   sleep 2
   . '$CCS_BIN/ccs-common.sh'

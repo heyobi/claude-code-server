@@ -126,20 +126,39 @@ ccs_channel_name() {
 # the same bridge session id when resuming, so the chat reappears at the URL it
 # already had: an archived conversation in the apps becomes live again.
 ccs_resume() {
-  local name="$1" uuid="$2" channel="${3:-}" chan=""
+  local name="$1" uuid="$2" channel="${3:-}" chan="" how
   if tmux has-session -t "$name" 2>/dev/null; then
     ccs_log "refusing to resume $name: that name is already running"
     return 1
   fi
   [ -n "$channel" ] && chan=" --channels $channel"
+  # A session nobody has spoken to yet has no transcript, and --resume with
+  # nothing to resume makes Claude Code exit at once. The tmux session dies
+  # seconds after it is created, the name leaves the pool, and the session the
+  # app was showing is simply gone.
+  #
+  # That is what happened to every new session whose backend was picked before
+  # it was used: choosing g4f or Antigravity relaunches the session, the
+  # relaunch resumed a conversation that had never started, and the pick
+  # destroyed the thing it was meant to configure. The app went on drawing it
+  # as "connecting" because the name was still reserved.
+  #
+  # The id is worth keeping either way — it is where the transcript will be
+  # written — so keep it, and start rather than resume when there is nothing
+  # there yet.
+  if [ -f "$(ccs_projdir)/${uuid}.jsonl" ]; then
+    how="--resume $uuid"
+  else
+    how="--session-id $uuid"
+  fi
   # shellcheck disable=SC2086
   if ! tmux new-session -d -s "$name" -x "$CCS_PANE_WIDTH" -y "$CCS_PANE_HEIGHT" -c "$CCS_WORKDIR" \
-    "$CCS_BINDIR/ccs-launch $(ccs_profile_of "$name") --resume $uuid --remote-control $name$chan$(ccs_extra_flags)$(ccs_adddirs)"; then
+    "$CCS_BINDIR/ccs-launch $(ccs_profile_of "$name") $how --remote-control $name$chan$(ccs_extra_flags)$(ccs_adddirs)"; then
     ccs_log "failed to resume $name"
     return 1
   fi
   printf '%s\n' "$uuid" > "$CCS_POOLDIR/${name}.uuid"
-  ccs_log "resumed: $name ($uuid)"
+  ccs_log "resumed: $name ($uuid)${how:+ [${how%% *}]}"
 }
 
 # tmux session name -> transcript path
