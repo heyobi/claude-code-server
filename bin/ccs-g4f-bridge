@@ -68,15 +68,40 @@ def text_of(content):
     return ""
 
 
+# A user turn that no person typed. The client appends its own after yours —
+# an environment note, a reminder, the opening line of a resumed session — and
+# a chat endpoint answers whichever one comes last. The first reply through
+# this bridge was "I won't use the scratchpad directory for temporary files
+# anymore", which is a perfectly good answer to the wrong message.
+MACHINERY = (
+    "<", "caveat:", "this session is being continued", "# environment",
+    "[request interrupted", "system-reminder",
+)
+
+
+def typed_by_a_person(said):
+    low = said.lstrip().lower()
+    return bool(low) and not any(low.startswith(mark) for mark in MACHINERY)
+
+
 def conversation(payload):
-    """The exchange so far, in the shape an OpenAI-style endpoint expects."""
+    """The exchange so far, in the shape an OpenAI-style endpoint expects.
+
+    Trimmed to end at the last thing a person actually said: everything after
+    it is the client talking to itself, and a provider handed that will answer
+    it instead of the question.
+    """
     out = []
     for message in payload.get("messages") or []:
         said = text_of(message.get("content")).strip()
-        if not said or said.startswith("<"):
+        if not said:
             continue
         role = "assistant" if message.get("role") == "assistant" else "user"
+        if role == "user" and not typed_by_a_person(said):
+            continue
         out.append({"role": role, "content": said})
+    while out and out[-1]["role"] != "user":
+        out.pop()
     return out
 
 
