@@ -430,14 +430,46 @@ def pane_lines(name):
     return tmux("capture-pane", "-p", "-t", name).splitlines()
 
 
+BOX_RULE = "\u2500"          # the rule the box you type into is drawn with
+CARET = re.compile(r'^\s*[>\u276f]')
+
+
+def input_box(lines):
+    """Where the box you type into is, or None while something else has the keyboard.
+
+    The box is three rows: a rule at column 0, the row holding the caret, and
+    another rule. Claude Code's dialogs draw a caret of their own \u2014 the auto
+    mode questionnaire, the theme picker, the trust prompt \u2014 but theirs marks
+    the selected row of a menu, and no box is drawn around it.
+
+    Telling the two apart by the caret alone is what made the app lie. A
+    session sitting on "Teach auto mode about your environment?" has
+    "\u276f Also scan shell history" among its last lines, so it was called
+    ready; the messages sent to it were typed into the dialog, which answered
+    none of them and showed nothing. The phone spun on "Scheming\u2026" while four
+    messages went nowhere. Ask for the box, not for the caret.
+    """
+    low = None
+    for index in range(len(lines) - 1, -1, -1):
+        if not lines[index].startswith(BOX_RULE):
+            continue
+        if low is None:
+            low = index
+            continue
+        if any(CARET.match(line) for line in lines[index + 1:low]):
+            return index
+        low = index
+    return None
+
+
 def pane_ready(name, lines=None):
     """A tmux session exists well before Claude Code has finished loading a
     resumed conversation. Typing into that gap loses the message, or gets an
     answer from a session that has not read its own history yet."""
-    tail = (lines if lines is not None else pane_lines(name))[-8:]
-    if any(re.search(r'to interrupt', line, re.I) for line in tail):
+    lines = lines if lines is not None else pane_lines(name)
+    if any(re.search(r'to interrupt', line, re.I) for line in lines[-8:]):
         return False
-    return any(re.match(r'^\s*[>\u276f]', line) for line in tail)
+    return input_box(lines) is not None
 
 
 # The word in the spinner is one of Claude Code's inventions and half of them
