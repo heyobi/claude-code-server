@@ -161,6 +161,34 @@ def profile_label(profile):
     return profile_env(profile).get("CCS_PROFILE_LABEL") or profile
 
 
+MODELS_SEEN = os.path.join(HOME, ".config", "claude-code-server", "models-seen.json")
+
+
+def models_seen(profile, found=None):
+    """The last list a gateway served, kept across restarts.
+
+    A gateway that is started on demand is down most of the time, and asking a
+    stopped gateway what it serves gives an empty picker. What it served last
+    time is a better answer than nothing, so it is written down.
+    """
+    try:
+        with open(MODELS_SEEN, encoding="utf-8") as handle:
+            book = json.load(handle)
+    except (OSError, ValueError):
+        book = {}
+    if found is None:
+        return book.get(profile) or []
+    if book.get(profile) == found:
+        return found
+    book[profile] = found
+    try:
+        with open(MODELS_SEEN, "w", encoding="utf-8") as handle:
+            json.dump(book, handle, indent=1)
+    except OSError:
+        pass
+    return found
+
+
 def gateway_models(profile):
     """Ask the gateway what it serves. Hardcoded lists go stale."""
     def produce():
@@ -176,9 +204,10 @@ def gateway_models(profile):
             with urllib.request.urlopen(request, timeout=10) as response:
                 payload = json.load(response)
         except Exception:
-            return []
+            return models_seen(profile)
         rows = payload.get("data") if isinstance(payload, dict) else payload
-        return sorted(r.get("id") for r in (rows or []) if r.get("id"))
+        found = sorted(r.get("id") for r in (rows or []) if r.get("id"))
+        return models_seen(profile, found) if found else models_seen(profile)
     return cached("models:" + profile, 120.0, produce)
 
 
